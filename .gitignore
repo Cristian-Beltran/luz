@@ -1,0 +1,47 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Env and secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Node
+node_modules/
+
+# Backend (NestJS)
+hemodialisis-luz-backend/dist/
+hemodialisis-luz-backend/coverage/
+hemodialisis-luz-backend/.nestjs-cli.log
+hemodialisis-luz-backend/data/*.sqlite
+hemodialisis-luz-backend/data/*.db
+
+# Frontend (Vite)
+hemodialisis-luz-frontend/dist/
+hemodialisis-luz-frontend/.vite/
+
+# Tooling caches
+.eslintcache
+*.tsbuildinfo
+
+# Python / Jupyter (if used)
+__pycache__/
+.ipynb_checkpoints/
+
+# Editors
+.idea/
+
+# Arduino / PlatformIO
+.pio/
+*.elf
+*.bin
+*.hex
+*.map
