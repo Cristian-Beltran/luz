@@ -49,16 +49,20 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
     });
 
     this.client.on('message', async (topicName, buffer) => {
-      const payload = this.parsePayload(buffer.toString());
-      if (!payload) return;
-
       const topicDeviceId = this.getDeviceIdFromTopic(topicName);
-      const deviceId = payload.deviceId ?? topicDeviceId;
+      const payload = this.parsePayload(buffer.toString());
+      const payloadDeviceId = payload?.deviceId;
+      const deviceId = payloadDeviceId ?? topicDeviceId;
       if (!deviceId) return;
 
       this.lastSeenAt = new Date();
+      if (!payload) {
+        return;
+      }
+
+      const sanitizedPayload = this.sanitizePayload(payload);
       this.lastTelemetry = {
-        ...payload,
+        ...sanitizedPayload,
         deviceId,
         receivedAt: this.lastSeenAt.toISOString(),
       };
@@ -74,19 +78,19 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
       this.lastPersistAtBySession.set(session.id, now);
 
       await this.sessionService.addSessionDataFromTelemetry(session, {
-        pulse: this.clamp(payload.heartRateBpm, 20, 250, 0),
-        oxygenSaturation: this.clamp(payload.spo2, 0, 100, 0),
-        temperatureC: this.clamp(payload.temperatureC, 30, 45, 0),
-        systolic: this.clamp(payload.estimatedSystolicMmHg, 50, 260, 0),
-        diastolic: this.clamp(payload.estimatedDiastolicMmHg, 30, 200, 0),
-        ambientTemperatureC: payload.ambientTemperatureC,
-        fingerDetected: Boolean(payload.fingerDetected),
-        monitoringEnabled: Boolean(payload.monitoringEnabled),
-        calibrationComplete: Boolean(payload.calibrationComplete),
-        respirationDetected: Boolean(payload.respirationDetected),
-        respirationMissing: Boolean(payload.respirationMissing),
-        warningActive: Boolean(payload.warningActive),
-        alertActive: Boolean(payload.alertActive),
+        pulse: this.clamp(sanitizedPayload.heartRateBpm, 20, 250, 0),
+        oxygenSaturation: this.clamp(sanitizedPayload.spo2, 0, 100, 0),
+        temperatureC: this.clamp(sanitizedPayload.temperatureC, 30, 45, 0),
+        systolic: this.clamp(sanitizedPayload.estimatedSystolicMmHg, 50, 260, 0),
+        diastolic: this.clamp(sanitizedPayload.estimatedDiastolicMmHg, 30, 200, 0),
+        ambientTemperatureC: sanitizedPayload.ambientTemperatureC,
+        fingerDetected: Boolean(sanitizedPayload.fingerDetected),
+        monitoringEnabled: Boolean(sanitizedPayload.monitoringEnabled),
+        calibrationComplete: Boolean(sanitizedPayload.calibrationComplete),
+        respirationDetected: Boolean(sanitizedPayload.respirationDetected),
+        respirationMissing: Boolean(sanitizedPayload.respirationMissing),
+        warningActive: Boolean(sanitizedPayload.warningActive),
+        alertActive: Boolean(sanitizedPayload.alertActive),
       });
     });
 
@@ -112,12 +116,32 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  publishControl(deviceId: string, command: 'start' | 'stop'): boolean {
+    if (!this.client?.connected) return false;
+    const topic = `luz/device/${deviceId}/control`;
+    const payload = JSON.stringify({ command });
+    this.client.publish(topic, payload);
+    return true;
+  }
+
   private parsePayload(raw: string): TelemetryPayload | null {
     try {
       return JSON.parse(raw) as TelemetryPayload;
     } catch {
       return null;
     }
+  }
+
+  private sanitizePayload(payload: TelemetryPayload): TelemetryPayload {
+    return {
+      ...payload,
+      heartRateBpm: this.toFiniteNumber(payload.heartRateBpm),
+      spo2: this.toFiniteNumber(payload.spo2),
+      temperatureC: this.toFiniteNumber(payload.temperatureC),
+      ambientTemperatureC: this.toFiniteNumber(payload.ambientTemperatureC),
+      estimatedSystolicMmHg: this.toFiniteNumber(payload.estimatedSystolicMmHg),
+      estimatedDiastolicMmHg: this.toFiniteNumber(payload.estimatedDiastolicMmHg),
+    };
   }
 
   private getDeviceIdFromTopic(topic: string): string | null {
@@ -135,5 +159,10 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
     const n = Number(value);
     if (!Number.isFinite(n)) return fallback;
     return Math.max(min, Math.min(max, Math.round(n)));
+  }
+
+  private toFiniteNumber(value: number | undefined): number | undefined {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : undefined;
   }
 }

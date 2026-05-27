@@ -13,7 +13,7 @@ import { MigrationController } from './database.controller';
           type: 'sqlite' as const,
           database: configService.database.sqlitePath,
           autoLoadEntities: true,
-          synchronize: false,
+          synchronize: true,
         };
       },
     }),

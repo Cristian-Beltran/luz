@@ -7,7 +7,7 @@ const configService = new ConfigService();
 const dbType = 'sqlite';
 
 const baseOptions = {
-  synchronize: false,
+  synchronize: true,
   logging: true,
   entities: [
     path.resolve(__dirname, '..', '..', 'app', '**', '*.entity.{ts,js}'),

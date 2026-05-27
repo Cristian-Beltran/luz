@@ -24,18 +24,23 @@ export class MonitoringController {
 
   @Post('start')
   async start(@Body() dto: StartMonitoringDto) {
-    return this.sessionService.createSession({
+    const session = await this.sessionService.createSession({
       patientId: dto.patientId,
       deviceId: DEVICE_ID,
     });
+    this.monitoringService.publishControl(DEVICE_ID, 'start');
+    return session;
   }
 
   @Patch('stop')
   async stop() {
     const activeSession = await this.sessionService.findActiveSession();
     if (!activeSession) {
+      this.monitoringService.publishControl(DEVICE_ID, 'stop');
       return { message: 'No active session' };
     }
-    return this.sessionService.closeSession(activeSession.id);
+    const closedSession = await this.sessionService.closeSession(activeSession.id);
+    this.monitoringService.publishControl(DEVICE_ID, 'stop');
+    return closedSession;
   }
 }

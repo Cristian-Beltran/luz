@@ -22,7 +22,6 @@ export class UserBaseService {
     const userRepeatEmail = await this.findByEmail(dto.email);
     if (userRepeatEmail) throw new BadRequestException('Email already exists');
     const user = this.userRepository.create(dto);
-    console.log(user.address);
     const passwordHash = await bcrypt.hash(dto.password.replace(/-/g, ''), 10);
     user.password = passwordHash;
     return this.userRepository.save(user);

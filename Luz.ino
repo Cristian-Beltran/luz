@@ -26,10 +26,11 @@ constexpr unsigned long STATUS_BLINK_MS = 300;
 constexpr unsigned long CALIBRATION_TIME_MS = 5000;
 constexpr uint8_t MLX90614_I2C_ADDRESS = 0x5A;
 
-const char* WIFI_SSID = "YOUR_WIFI_SSID";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+const char* WIFI_SSID = "Cordova hogar ext";
+const char* WIFI_PASSWORD = "4ndiNicol3";
 const char* MQTT_HOST = "broker.hivemq.com";
 constexpr uint16_t MQTT_PORT = 1883;
+constexpr uint16_t MQTT_BUFFER_SIZE = 1024;
 const char* DEVICE_ID = "esp32-luz-01";
 
 // Parametros del MAX30105
@@ -158,7 +159,10 @@ uint16_t readFilteredAdc(uint8_t pin);
 float adcToVoltage(uint16_t rawAdc);
 void ensureWifi();
 void ensureMqtt();
+void onMqttMessage(char* topic, byte* payload, unsigned int length);
 void publishTelemetryMqtt();
+float sanitizeNumber(float value);
+void resetMonitoringCycle();
 
 void setup() {
   Serial.begin(115200);
@@ -184,7 +188,9 @@ void setup() {
   initializeAnalogInputs();
   initializeMax30105();
   initializeTemperatureSensor();
+  mqttClient.setBufferSize(MQTT_BUFFER_SIZE);
   mqttClient.setServer(MQTT_HOST, MQTT_PORT);
+  mqttClient.setCallback(onMqttMessage);
   ensureWifi();
   ensureMqtt();
 
@@ -206,6 +212,7 @@ void loop() {
   if (millis() - lastSerialPrintMs >= SERIAL_INTERVAL_MS) {
     lastSerialPrintMs = millis();
     printTelemetry();
+    publishTelemetryMqtt();
   }
 }
 
@@ -439,6 +446,30 @@ void beginCalibration() {
   Serial.println("Dedo detectado. Iniciando calibracion de respiracion y presion.");
 }
 
+void resetMonitoringCycle() {
+  calibrationStarted = false;
+  calibrationComplete = false;
+  mqRespirationDeltaAdc = 0;
+  pressurePulseDeltaAdc = 0;
+  respirationDetected = false;
+  strongRespirationDetected = false;
+  respirationMissing = false;
+  lastRespirationDetectedMs = 0;
+  pressurePulseDetected = false;
+  pressurePulseStrongDetected = false;
+  pressureCuffDetected = false;
+  pressureCuffStrongDetected = false;
+  pressureMeasurementActive = false;
+  estimatedSystolicMmHg = 0;
+  estimatedDiastolicMmHg = 0;
+  validHeartRate = false;
+  validSpO2 = false;
+  warningActive = false;
+  alertActive = false;
+  buzzerState = false;
+  digitalWrite(BUZZER_PIN, LOW);
+}
+
 void updateMax30105() {
   if (!max30105Available) {
     validHeartRate = false;
@@ -497,26 +528,12 @@ void updateMax30105() {
   uint32_t averageIr = irAccumulator / MAX30105_BUFFER_SIZE;
   fingerDetected = averageIr >= MIN_FINGER_IR && averageIr <= MAX_FINGER_IR;
 
-  if (fingerDetected && !monitoringEnabled) {
-    monitoringEnabled = true;
+  if (!monitoringEnabled) {
+    resetMonitoringCycle();
+  } else if (fingerDetected && !calibrationStarted) {
     beginCalibration();
-  } else if (!fingerDetected) {
-    monitoringEnabled = false;
-    calibrationStarted = false;
-    calibrationComplete = false;
-    mqRespirationDeltaAdc = 0;
-    pressurePulseDeltaAdc = 0;
-    respirationDetected = false;
-    strongRespirationDetected = false;
-    respirationMissing = false;
-    lastRespirationDetectedMs = 0;
-    pressurePulseDetected = false;
-    pressurePulseStrongDetected = false;
-    pressureCuffDetected = false;
-    pressureCuffStrongDetected = false;
-    pressureMeasurementActive = false;
-    estimatedSystolicMmHg = 0;
-    estimatedDiastolicMmHg = 0;
+  } else if (!fingerDetected && calibrationStarted) {
+    resetMonitoringCycle();
   }
 
   if (fingerDetected &&
@@ -556,7 +573,7 @@ void updateMax30105() {
 
 void evaluateAlerts() {
   if (!monitoringEnabled) {
-    warningActive = true;
+    warningActive = false;
     alertActive = false;
     return;
   }
@@ -619,7 +636,13 @@ void updateOutputs() {
 
 void printTelemetry() {
   if (!monitoringEnabled) {
-    Serial.println("Estado: Esperando dedo");
+    Serial.println("Estado: Monitoreo detenido. Inicie desde la app.");
+    Serial.println();
+    return;
+  }
+
+  if (!fingerDetected) {
+    Serial.println("Estado: Monitoreo iniciado. Coloque el dedo para comenzar.");
     Serial.println();
     return;
   }
@@ -691,8 +714,6 @@ void printTelemetry() {
   Serial.println();
   Serial.println();
 
-  publishTelemetryMqtt();
-
 }
 
 void ensureWifi() {
@@ -713,20 +734,49 @@ void ensureMqtt() {
   if (WiFi.status() != WL_CONNECTED) return;
 
   String clientId = String("luz-") + DEVICE_ID;
-  mqttClient.connect(clientId.c_str());
+  if (mqttClient.connect(clientId.c_str())) {
+    String controlTopic = String("luz/device/") + DEVICE_ID + "/control";
+    mqttClient.subscribe(controlTopic.c_str());
+  }
+}
+
+void onMqttMessage(char* topic, byte* payload, unsigned int length) {
+  String topicName(topic);
+  String expectedTopic = String("luz/device/") + DEVICE_ID + "/control";
+  if (topicName != expectedTopic) return;
+
+  String message;
+  for (unsigned int i = 0; i < length; i++) {
+    message += static_cast<char>(payload[i]);
+  }
+  message.toLowerCase();
+
+  if (message.indexOf("start") >= 0) {
+    monitoringEnabled = true;
+    resetMonitoringCycle();
+    Serial.println("Monitoreo iniciado desde backend. Esperando dedo.");
+  } else if (message.indexOf("stop") >= 0) {
+    monitoringEnabled = false;
+    resetMonitoringCycle();
+    Serial.println("Monitoreo detenido desde backend.");
+  }
 }
 
 void publishTelemetryMqtt() {
   if (!mqttClient.connected()) return;
 
   String topic = String("luz/device/") + DEVICE_ID + "/telemetry";
+  float safeHeartRate = sanitizeNumber(validHeartRate ? heartRateBpm : 0.0f);
+  float safeSpo2 = sanitizeNumber(validSpO2 ? spo2Filtered : 0.0f);
+  float safeBodyTemp = sanitizeNumber(bodyTemperatureC);
+  float safeAmbientTemp = sanitizeNumber(ambientTemperatureC);
   String payload = "{";
   payload += "\"deviceId\":\"" + String(DEVICE_ID) + "\",";
   payload += "\"ts\":" + String(millis()) + ",";
-  payload += "\"heartRateBpm\":" + String(validHeartRate ? heartRateBpm : 0.0f, 1) + ",";
-  payload += "\"spo2\":" + String(validSpO2 ? spo2Filtered : 0.0f, 1) + ",";
-  payload += "\"temperatureC\":" + String(bodyTemperatureC, 1) + ",";
-  payload += "\"ambientTemperatureC\":" + String(ambientTemperatureC, 1) + ",";
+  payload += "\"heartRateBpm\":" + String(safeHeartRate, 1) + ",";
+  payload += "\"spo2\":" + String(safeSpo2, 1) + ",";
+  payload += "\"temperatureC\":" + String(safeBodyTemp, 1) + ",";
+  payload += "\"ambientTemperatureC\":" + String(safeAmbientTemp, 1) + ",";
   payload += "\"estimatedSystolicMmHg\":" + String(estimatedSystolicMmHg) + ",";
   payload += "\"estimatedDiastolicMmHg\":" + String(estimatedDiastolicMmHg) + ",";
   payload += "\"fingerDetected\":" + String(fingerDetected ? "true" : "false") + ",";
@@ -738,7 +788,16 @@ void publishTelemetryMqtt() {
   payload += "\"alertActive\":" + String(alertActive ? "true" : "false");
   payload += "}";
 
-  mqttClient.publish(topic.c_str(), payload.c_str(), false);
+  bool published = mqttClient.publish(topic.c_str(), payload.c_str(), false);
+  if (!published) {
+    Serial.print("MQTT publish failed. Payload size: ");
+    Serial.println(payload.length());
+  }
+}
+
+float sanitizeNumber(float value) {
+  if (isnan(value) || isinf(value)) return 0.0f;
+  return value;
 }
 
 uint16_t readFilteredAdc(uint8_t pin) {

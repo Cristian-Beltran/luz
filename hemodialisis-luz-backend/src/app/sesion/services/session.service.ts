@@ -1,5 +1,5 @@
 // src/app/session/session.service.ts
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Session } from '../entities/session.entity';
@@ -37,7 +37,8 @@ export class SessionService {
   async createSession(dto: CreateSessionDto): Promise<Session> {
     const activeSession = await this.findActiveSession();
     if (activeSession) {
-      throw new BadRequestException('There is already an active session');
+      activeSession.endedAt = new Date();
+      await this.sessionRepo.save(activeSession);
     }
 
     const patient = await this.patientRepo.findOne({

@@ -42,7 +42,7 @@ type LatestFlags = {
   fingerDetected: boolean;
 };
 
-const MQTT_WS_URL = "ws://broker.hivemq.com:8000/mqtt";
+const MQTT_WS_URL = "wss://broker.hivemq.com:8884/mqtt";
 const TOPIC = "luz/device/esp32-luz-01/telemetry";
 
 function toPoint(payload: Record<string, unknown>): LivePoint {
@@ -95,6 +95,8 @@ export default function MonitoringPage() {
   useEffect(() => {
     const client: MqttClient = mqtt.connect(MQTT_WS_URL, {
       clientId: `frontend-${Math.random().toString(16).slice(2, 8)}`,
+      reconnectPeriod: 2000,
+      connectTimeout: 10_000,
     });
 
     client.on("connect", () => {
@@ -104,6 +106,7 @@ export default function MonitoringPage() {
 
     client.on("offline", () => setMqttOnline(false));
     client.on("close", () => setMqttOnline(false));
+    client.on("error", () => setMqttOnline(false));
 
     client.on("message", (_topic, message) => {
       try {
@@ -159,6 +162,10 @@ export default function MonitoringPage() {
   const last = points.at(-1);
   const hasActiveSession = Boolean(status?.activeSession && !status.activeSession.endedAt);
   const activePatientName = status?.activeSession?.patient?.user?.fullname ?? "Sin paciente";
+  const isStreaming =
+    Boolean(status?.espOnline) &&
+    Boolean(status?.lastTelemetry) &&
+    Boolean((status?.lastTelemetry as Record<string, unknown> | null)?.fingerDetected);
 
   const chartData = useMemo(
     () =>
@@ -183,6 +190,7 @@ export default function MonitoringPage() {
         <CardContent className="flex flex-wrap items-center gap-2">
           <Badge variant={mqttOnline ? "default" : "secondary"}>MQTT Frontend: {mqttOnline ? "Conectado" : "Desconectado"}</Badge>
           <Badge variant={status?.espOnline ? "default" : "secondary"}>ESP: {status?.espOnline ? "Online" : "Offline"}</Badge>
+          <Badge variant={isStreaming ? "default" : "secondary"}>Datos clinicos: {isStreaming ? "Transmitiendo" : "En espera"}</Badge>
           <Badge variant={hasActiveSession ? "default" : "outline"}>Sesion: {hasActiveSession ? "Activa" : "Sin sesion activa"}</Badge>
           <Badge variant="outline">Paciente: {activePatientName}</Badge>
           <Badge variant={flags.alertActive ? "destructive" : flags.warningActive ? "secondary" : "outline"}>
