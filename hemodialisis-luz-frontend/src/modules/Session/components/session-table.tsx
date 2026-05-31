@@ -116,7 +116,7 @@ export function SessionsTable({
       {/* KPIs globales */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <Card className="flex-1 bg-muted/30 border-dotted">
-          <CardContent className="grid gap-3 py-4 sm:grid-cols-3">
+          <CardContent className="grid gap-3 py-4 sm:grid-cols-2 xl:grid-cols-3">
             <Kpi label="Sesiones" value={list.length} />
             <Kpi
               label="Lecturas"
@@ -126,7 +126,7 @@ export function SessionsTable({
           </CardContent>
         </Card>
 
-        <div className="flex items-center justify-end gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <Button
             variant="outline"
             size="sm"
@@ -209,7 +209,7 @@ export function SessionsTable({
                 <Separator className="my-2" />
 
                 {/* Mini KPIs de la sesión */}
-                <div className="grid gap-3 md:grid-cols-3">
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                   <MetricCompact
                     title="Pulso (bpm)"
                     avg={st.pulse.avg}
@@ -234,7 +234,7 @@ export function SessionsTable({
                 </div>
 
                 {/* KPIs de Presión con badge compuesto */}
-                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <div className="mt-3 grid gap-3 xl:grid-cols-2">
                   <MetricBp
                     title="Presión arterial (mmHg)"
                     avgSys={st.systolic.avg}
@@ -255,7 +255,7 @@ export function SessionsTable({
                         Última lectura de la sesión
                       </CardDescription>
                     </CardHeader>
-                    <CardContent className="grid grid-cols-5 gap-2 text-xs">
+                    <CardContent className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3 xl:grid-cols-5">
                       <Chip label="BPM" value={safe(last?.pulse)} />
                       <Chip label="SpO₂" value={safe(last?.oxygenSaturation)} />
                       <Chip label="°C" value={safe(last?.temperatureC)} />
@@ -266,7 +266,7 @@ export function SessionsTable({
                 </div>
 
                 {/* Grid de lecturas (tiles) */}
-                <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="mt-4 grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
                   {recs.map((r) => {
                     const date = new Date(r.recordedAt);
                     const timeLabel = Number.isFinite(date.getTime())
@@ -290,7 +290,7 @@ export function SessionsTable({
                             {dayLabel}
                           </CardDescription>
                         </CardHeader>
-                        <CardContent className="grid grid-cols-5 gap-2 text-xs">
+                        <CardContent className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3 xl:grid-cols-5">
                           <Chip label="BPM" value={safe(r.pulse)} />
                           <Chip label="SpO₂" value={safe(r.oxygenSaturation)} />
                           <Chip label="°C" value={safe(r.temperatureC)} />
@@ -342,7 +342,7 @@ function MetricCompact({
   const p = pct(now, min, max);
   return (
     <div className="rounded-lg border p-3">
-      <div className="flex items-center justify-between mb-1">
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
         <span className="text-sm font-medium">{title}</span>
         <Badge variant="outline" className="font-mono text-[11px]">
           {now == null ? "—" : v.toFixed(0)}
@@ -384,7 +384,7 @@ function MetricBp({
       : `${nowSys.toFixed(0)}/${nowDia.toFixed(0)}`;
   return (
     <div className="rounded-lg border p-3">
-      <div className="flex items-center justify-between mb-1">
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
         <span className="text-sm font-medium">{title}</span>
         <Badge variant="outline" className="font-mono text-[11px]">
           {badge}
@@ -401,7 +401,7 @@ function MetricBp({
 
 function Chip({ label, value }: { label: string; value: number | null }) {
   return (
-    <div className="flex items-center justify-between rounded-md border px-2 py-1 bg-muted/30">
+    <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/30 px-2 py-1">
       <span className="text-[11px] text-muted-foreground">{label}</span>
       <span className="font-mono text-[12px]">
         {value == null ? "—" : value.toFixed(0)}

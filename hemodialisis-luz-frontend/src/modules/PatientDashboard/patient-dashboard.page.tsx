@@ -65,7 +65,7 @@ export default function PatientDashboardPage() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 md:grid-cols-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
         <ClinicalMetricCard
           title="Pulso"
           icon={<HeartPulse className="h-3.5 w-3.5" />}

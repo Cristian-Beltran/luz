@@ -46,6 +46,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
 
   // Modo rail: colapsado/expandido en desktop (nada que ver con tu sidebar previo)
   const [expanded, setExpanded] = useState<boolean>(true);
+  const showExpandedContent = expanded || isOpen;
 
   const handleLogout = () => {
     logout();
@@ -64,7 +65,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       {/* Overlay móvil */}
       {isOpen && (
         <div
-          className="fixed inset-0 bg-background/70 backdrop-blur-sm z-40 lg:hidden"
+          className="fixed inset-0 z-40 bg-background/70 backdrop-blur-sm md:hidden"
           onClick={onClose}
         />
       )}
@@ -72,14 +73,14 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       {/* Contenedor (desktop rail + móvil drawer) */}
       <aside
         className={cn(
-          "fixed left-0 top-0 z-50 h-screen border-r border-border/60 shadow-md",
+          "fixed left-0 top-0 z-50 h-dvh w-72 border-r border-border/60 shadow-md",
           "bg-sidebar/90 backdrop-blur supports-[backdrop-filter]:bg-sidebar/80",
           "transition-[transform,width] duration-300 ease-in-out",
-          "lg:m-3 lg:rounded-2xl lg:h-[calc(100vh-1.5rem)]",
+          "md:sticky md:top-3 md:z-30 md:ml-3 md:my-3 md:h-[calc(100dvh-1.5rem)] md:shrink-0 md:rounded-2xl",
           // Desktop rail width
-          expanded ? "lg:w-72" : "lg:w-20",
+          showExpandedContent ? "md:w-72" : "md:w-20",
           // Mobile drawer
-          isOpen ? "translate-x-0 w-72" : "-translate-x-full lg:translate-x-0",
+          isOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
         )}
         style={backgroundStyle}
       >
@@ -87,7 +88,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         <div
           className={cn(
             "relative flex items-center",
-            expanded ? "px-4" : "px-2",
+            showExpandedContent ? "px-4" : "px-2",
             "py-4",
           )}
         >
@@ -95,7 +96,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
             <div className="h-9 w-9 grid place-items-center rounded-xl bg-primary/15 text-primary">
               <Droplet className="h-4 w-4" />
             </div>
-            {expanded && (
+            {showExpandedContent && (
               <div className="leading-tight">
                 <div className="text-sm font-semibold">Luz Clínica</div>
                 <div className="text-[11px] text-muted-foreground">
@@ -110,7 +111,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
             variant="ghost"
             size="icon"
             onClick={onClose}
-            className="absolute right-2 top-2 lg:hidden"
+            className="absolute right-2 top-2 md:hidden"
           >
             ✕
           </Button>
@@ -119,7 +120,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
           <Button
             variant="ghost"
             size="icon"
-            className="ml-auto hidden lg:inline-flex"
+            className="ml-auto hidden md:inline-flex"
             onClick={() => setExpanded((v) => !v)}
             title={expanded ? "Colapsar" : "Expandir"}
           >
@@ -160,7 +161,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                 >
                   <Icon className="h-5 w-5" />
                 </span>
-                {expanded && (
+                {showExpandedContent && (
                   <span className="ml-3 text-sm font-medium truncate">
                     {item.name}
                   </span>
@@ -178,7 +179,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         <div
           className={cn(
             "absolute bottom-0 left-0 right-0 border-t border-border/60",
-            expanded ? "px-3" : "px-2",
+            showExpandedContent ? "px-3" : "px-2",
             "py-3",
           )}
         >
@@ -186,7 +187,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
           <div
             className={cn(
               "mb-2 flex items-center gap-3 rounded-xl bg-muted/40",
-              expanded ? "px-3 py-2.5" : "px-2 py-2 justify-center",
+              showExpandedContent ? "px-3 py-2.5" : "px-2 py-2 justify-center",
             )}
           >
             <div className="h-9 w-9 grid place-items-center rounded-lg bg-primary text-primary-foreground">
@@ -199,7 +200,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                   .toUpperCase()}
               </span>
             </div>
-            {expanded && (
+            {showExpandedContent && (
               <div className="min-w-0">
                 <p className="text-sm font-medium truncate">
                   {user?.fullname ?? "Usuario"}
@@ -212,13 +213,13 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
           </div>
 
           {/* Acciones */}
-          <div className={cn("", expanded ? "gap-2" : "flex-col gap-2")}>
+          <div className={cn("", showExpandedContent ? "gap-2" : "flex-col gap-2")}>
             <Button
               variant="ghost"
               onClick={toggleTheme}
               className={cn(
                 "justify-start rounded-xl",
-                expanded ? "w-full px-3" : "w-full px-0 justify-center",
+                showExpandedContent ? "w-full px-3" : "w-full px-0 justify-center",
               )}
               title={theme === "light" ? "Modo oscuro" : "Modo claro"}
             >
@@ -227,7 +228,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
               ) : (
                 <Sun className="h-5 w-5" />
               )}
-              {expanded && (
+              {showExpandedContent && (
                 <span className="ml-2 text-sm">
                   {theme === "light" ? "Modo oscuro" : "Modo claro"}
                 </span>
@@ -239,12 +240,12 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
               onClick={handleLogout}
               className={cn(
                 "justify-start text-destructive hover:bg-destructive/10 rounded-xl",
-                expanded ? "w-full px-3" : "w-full px-0 justify-center",
+                showExpandedContent ? "w-full px-3" : "w-full px-0 justify-center",
               )}
               title="Cerrar sesión"
             >
               <LogOut className="h-5 w-5" />
-              {expanded && <span className="ml-2 text-sm">Cerrar sesión</span>}
+              {showExpandedContent && <span className="ml-2 text-sm">Cerrar sesión</span>}
             </Button>
           </div>
         </div>

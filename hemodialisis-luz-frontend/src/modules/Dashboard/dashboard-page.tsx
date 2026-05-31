@@ -261,8 +261,8 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       {/* HERO con gradiente (nuevo look) */}
-      <div className="rounded-2xl border ring-1 ring-border bg-gradient-to-r from-background to-muted/40 p-5 flex items-center justify-between">
-        <div>
+      <div className="flex flex-col gap-3 rounded-2xl border bg-gradient-to-r from-background to-muted/40 p-4 ring-1 ring-border sm:flex-row sm:items-center sm:justify-between sm:p-5">
+        <div className="min-w-0">
           <h2 className="text-2xl font-bold">
             Hola, {user?.fullname ?? "Doctor"}
           </h2>
@@ -274,6 +274,7 @@ export default function DashboardPage() {
           onClick={load}
           disabled={loading}
           title="Recargar"
+          className="w-full sm:w-auto"
         >
           <RefreshCw className="h-4 w-4 mr-2" />
           {loading ? "Cargando..." : "Recargar"}
@@ -290,7 +291,7 @@ export default function DashboardPage() {
       )}
 
       {/* KPIs – badges prominentes */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <KpiTile
           label="Pacientes"
           value={patientsCount || 0}
@@ -336,7 +337,7 @@ export default function DashboardPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               <VitalTile
                 title="Pulso"
                 value={vPulse}
@@ -402,7 +403,7 @@ export default function DashboardPage() {
               recentPatients.map((p, i) => (
                 <div
                   key={`${p.name}-${i}`}
-                  className="flex items-center justify-between rounded-lg border p-3 bg-muted/30"
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3 bg-muted/30"
                 >
                   <div>
                     <div className="font-medium">{p.name}</div>
@@ -430,7 +431,7 @@ export default function DashboardPage() {
             Resumen compacto de las últimas 6 sesiones
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+        <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {(Array.isArray(sessions) ? sessions : [])
             .slice()
             .sort((a, b) => {
@@ -471,8 +472,8 @@ export default function DashboardPage() {
                   className="border-muted/70"
                 >
                   <CardContent className="py-4 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="text-sm font-semibold">{name}</div>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0 text-sm font-semibold">{name}</div>
                       <Badge variant={s.endedAt ? "outline" : "default"}>
                         {s.endedAt ? "Cerrada" : "Activa"}
                       </Badge>
@@ -481,7 +482,7 @@ export default function DashboardPage() {
                       {startedAtLabel}
                     </div>
                     <Separator />
-                    <div className="grid grid-cols-5 gap-2 text-xs">
+                    <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3 xl:grid-cols-5">
                       <Chip label="BPM" value={pulse} />
                       <Chip label="SpO₂" value={spo2} />
                       <Chip label="°C" value={temp} />
@@ -512,7 +513,7 @@ function KpiTile({
 }) {
   return (
     <Card className="bg-muted/30 border-dotted">
-      <CardContent className="py-4 flex items-center justify-between">
+      <CardContent className="flex items-center justify-between gap-3 py-4">
         <div>
           <div className="text-[11px] text-muted-foreground">{label}</div>
           <div className="text-xl font-semibold">{value}</div>
@@ -542,7 +543,7 @@ function VitalTile({
 }) {
   return (
     <div className="rounded-xl border p-3 bg-card/50">
-      <div className="flex items-center justify-between mb-2">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           {icon}
           <span className="text-sm font-medium">{title}</span>
@@ -577,7 +578,7 @@ function PressureBand({
 
   return (
     <div className="rounded-xl border p-3 bg-card/50">
-      <div className="flex items-center justify-between mb-2">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Gauge className="h-4 w-4" />
           <span className="text-sm font-medium">Presión arterial</span>
@@ -609,7 +610,7 @@ function PressureBand({
 
 function Chip({ label, value }: { label: string; value: number | null }) {
   return (
-    <div className="flex items-center justify-between rounded-md border px-2 py-1 bg-muted/30">
+    <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/30 px-2 py-1">
       <span className="text-[11px] text-muted-foreground">{label}</span>
       <span className="font-mono text-[12px]">
         {value == null ? "—" : value.toFixed(0)}

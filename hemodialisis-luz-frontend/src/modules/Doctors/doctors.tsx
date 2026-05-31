@@ -22,31 +22,29 @@ export default function DoctorPage() {
     setIsModalOpen(true);
   };
   return (
-    <>
-      <div className="space-y-6">
-        <DashboardHeader
-          title="Doctores"
-          description="Lista de doctores"
-          actions={
-            <>
-              <Button onClick={openForCreate}>
-                <PlusCircle />
-                Crear
-              </Button>
-              <Button
-                size={"icon"}
-                variant="outline"
-                onClick={fetchFull}
-                title="Recargar"
-              >
-                <RotateCcw />
-              </Button>
-            </>
-          }
-        ></DashboardHeader>
-      </div>
+    <div className="space-y-6">
+      <DashboardHeader
+        title="Doctores"
+        description="Lista de doctores"
+        actions={
+          <>
+            <Button onClick={openForCreate}>
+              <PlusCircle />
+              Crear
+            </Button>
+            <Button
+              size={"icon"}
+              variant="outline"
+              onClick={fetchFull}
+              title="Recargar"
+            >
+              <RotateCcw />
+            </Button>
+          </>
+        }
+      ></DashboardHeader>
 
-      <div className="p-6 space-y-6">
+      <div className="space-y-6">
         <TableDoctor onEdit={openForEdit} />
       </div>
 
@@ -55,6 +53,6 @@ export default function DoctorPage() {
         onClose={() => setIsModalOpen(false)}
         user={selectedUser}
       />
-    </>
+    </div>
   );
 }

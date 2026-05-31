@@ -6,6 +6,12 @@ import { router } from "./app.router";
 import { ThemeProvider } from "./providers/ThemeProvider";
 import { Toaster } from "./components/ui/sonner";
 
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    void navigator.serviceWorker.register("/sw.js");
+  });
+}
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ThemeProvider>

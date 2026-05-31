@@ -10,9 +10,11 @@ export function DataTableToolbar<TData>({
     table,
 }: DataTableToolbarProps<TData>) {
     return (
-        <div className="flex items-center justify-between">
-            {extraContent}
-            <DataTableColumnToggle table={table} />
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0 flex-1">{extraContent}</div>
+            <div className="shrink-0">
+                <DataTableColumnToggle table={table} />
+            </div>
         </div>
     );
 }

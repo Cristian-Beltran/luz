@@ -202,26 +202,24 @@ export default function SessionPage() {
   };
 
   return (
-    <>
-      <div className="space-y-6">
-        <DashboardHeader
-          title="Sesiones del paciente"
-          description="Registro de sesiones y métricas clínicas"
-          actions={
-            <Button
-              size="icon"
-              variant="outline"
-              onClick={onReload}
-              title="Recargar"
-              disabled={isLoading}
-            >
-              <RotateCcw />
-            </Button>
-          }
-        />
-      </div>
+    <div className="space-y-6">
+      <DashboardHeader
+        title="Sesiones del paciente"
+        description="Registro de sesiones y métricas clínicas"
+        actions={
+          <Button
+            size="icon"
+            variant="outline"
+            onClick={onReload}
+            title="Recargar"
+            disabled={isLoading}
+          >
+            <RotateCcw />
+          </Button>
+        }
+      />
 
-      <div className="p-6 space-y-6">
+      <div className="space-y-6">
         <Card className="border-0 shadow-sm bg-[radial-gradient(circle_at_top_left,_#f0f9ff,_#f8fafc_50%,_#f5f3ff)]">
           <CardHeader>
             <CardTitle className="tracking-tight">Filtros globales</CardTitle>
@@ -229,9 +227,9 @@ export default function SessionPage() {
               Estos filtros aplican a graficas, tabla y exportaciones.
             </CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-3 md:grid-cols-6">
+          <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
             <input
-              className="rounded-lg border bg-background px-3 py-2 md:col-span-2"
+              className="rounded-lg border bg-background px-3 py-2 sm:col-span-2"
               placeholder="Buscar por paciente o id de sesion"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -279,7 +277,7 @@ export default function SessionPage() {
           </CardContent>
         </Card>
 
-        <div className="grid gap-4 md:grid-cols-4">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <Card className="animate-in fade-in slide-in-from-bottom-1 duration-500">
             <CardHeader>
               <CardDescription className="text-[11px] uppercase tracking-wide inline-flex items-center gap-1.5"><Activity className="h-3.5 w-3.5" />Sesiones clinicas</CardDescription>
@@ -318,7 +316,7 @@ export default function SessionPage() {
         )}
 
         <Tabs defaultValue="charts" className="w-full">
-          <TabsList className="grid w-full max-w-md grid-cols-2 rounded-xl bg-muted/60 p-1">
+          <TabsList className="grid w-full grid-cols-2 rounded-xl bg-muted/60 p-1 sm:max-w-md">
             <TabsTrigger value="charts">Gráficas</TabsTrigger>
             <TabsTrigger value="table">Tabla de datos</TabsTrigger>
           </TabsList>
@@ -348,6 +346,6 @@ export default function SessionPage() {
           </TabsContent>
         </Tabs>
       </div>
-    </>
+    </div>
   );
 }

@@ -8,7 +8,7 @@ import { Server, Socket } from 'socket.io';
 
 @WebSocketGateway({
   namespace: '/monitoring',
-  cors: { origin: ['http://localhost:5173'], credentials: true },
+  cors: { origin: true, credentials: true },
 })
 export class MonitoringGateway
   implements OnGatewayConnection, OnGatewayDisconnect

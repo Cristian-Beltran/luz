@@ -5,6 +5,7 @@ import DashboardPage from "./modules/Dashboard/dashboard-page";
 import LoginPage from "./pages/login";
 import NotFoundPage from "./pages/not-found";
 import MonitoringPage from "./modules/Monitoring/monitoring";
+import PublicMonitoringPage from "./modules/Monitoring/public-monitoring";
 import DoctorsPage from "./modules/Doctors/doctors";
 import { AuthProvider } from "./auth/ProtectedRoute";
 import PatientPage from "./modules/Patient/patient";
@@ -23,6 +24,7 @@ function RoleHome() {
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
+  { path: "/public/monitoring", element: <PublicMonitoringPage /> },
   {
     path: "/",
     element: (

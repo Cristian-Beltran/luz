@@ -3,7 +3,17 @@ import axios from "axios";
 import Cookies from "js-cookie";
 //import Cookies from "js-cookie";
 
-const API_URL = "http://localhost:3000";
+const getApiUrl = () => {
+  const configuredUrl = import.meta.env.VITE_API_URL as string | undefined;
+  if (configuredUrl) return configuredUrl;
+
+  if (typeof window === "undefined") return "http://localhost:3000";
+
+  const protocol = window.location.protocol === "https:" ? "https:" : "http:";
+  return `${protocol}//${window.location.hostname}:3000`;
+};
+
+const API_URL = getApiUrl();
 const instance = axios.create({
   baseURL: API_URL,
   headers: {

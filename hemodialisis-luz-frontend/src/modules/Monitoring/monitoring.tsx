@@ -200,8 +200,8 @@ export default function MonitoringPage() {
       </Card>
 
       <Card>
-        <CardContent className="pt-6 grid gap-3 md:grid-cols-4">
-          <select className="rounded-md border px-3 py-2" value={patientId} onChange={(e) => setPatientId(e.target.value)} disabled={hasActiveSession}>
+        <CardContent className="grid gap-3 pt-6 sm:grid-cols-2 xl:grid-cols-4">
+          <select className="min-w-0 rounded-md border px-3 py-2" value={patientId} onChange={(e) => setPatientId(e.target.value)} disabled={hasActiveSession}>
             <option value="">Selecciona paciente</option>
             {patients.map((p) => (
               <option key={p.id} value={p.id}>{p.user.fullname}</option>
@@ -215,14 +215,14 @@ export default function MonitoringPage() {
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 
-      <div className="grid gap-3 md:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatePill label="Sensor de dedo" ok={flags.fingerDetected} okText="Detectado" badText="No detectado" />
         <StatePill label="Respiracion" ok={!flags.respirationMissing} okText="Sin riesgo" badText="No detectada" />
         <StatePill label="ESP conectado" ok={Boolean(status?.espOnline)} okText="Online" badText="Offline" />
         <StatePill label="Sesion activa" ok={hasActiveSession} okText="Activa" badText="No activa" />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
         <ClinicalMetricCard
           title="Pulso"
           icon={<HeartPulse className="h-3.5 w-3.5" />}
@@ -285,7 +285,7 @@ export default function MonitoringPage() {
         <CardContent>
           <div className="max-h-72 overflow-auto space-y-2">
             {points.slice(-20).reverse().map((p, idx) => (
-              <div key={`${p.ts}-${idx}`} className="grid grid-cols-2 md:grid-cols-6 gap-2 text-xs rounded-md border px-3 py-2 bg-muted/20">
+              <div key={`${p.ts}-${idx}`} className="grid grid-cols-1 gap-2 rounded-md border bg-muted/20 px-3 py-2 text-xs sm:grid-cols-2 xl:grid-cols-6">
                 <span>{new Date(p.ts).toLocaleTimeString("es-ES")}</span>
                 <span>Pulso {p.pulse.toFixed(0)}</span>
                 <span>SpO2 {p.spo2.toFixed(0)}%</span>
@@ -314,7 +314,7 @@ function StatePill({
 }) {
   return (
     <Card>
-      <CardContent className="pt-5 flex items-center justify-between">
+      <CardContent className="flex flex-wrap items-center justify-between gap-2 pt-5">
         <span className="text-sm text-muted-foreground">{label}</span>
         <Badge variant={ok ? "default" : "secondary"}>{ok ? okText : badText}</Badge>
       </CardContent>
@@ -338,7 +338,7 @@ function ChartCard({
       <CardHeader>
         <CardTitle>{title}</CardTitle>
       </CardHeader>
-      <CardContent className="h-[260px]">
+      <CardContent className="h-[240px] sm:h-[260px]">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data}>
             <CartesianGrid strokeDasharray="3 3" />

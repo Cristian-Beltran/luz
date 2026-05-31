@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { connect, MqttClient } from 'mqtt';
+import { Session } from 'src/app/sesion/entities/session.entity';
 import { SessionService } from 'src/app/sesion/services/session.service';
 
 type TelemetryPayload = {
@@ -46,6 +47,7 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
         if (err) this.logger.error(`Subscribe error: ${err.message}`);
         else this.logger.log(`Subscribed to ${topic}`);
       });
+      void this.publishCurrentSessionState('esp32-luz-01');
     });
 
     this.client.on('message', async (topicName, buffer) => {
@@ -122,6 +124,34 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
     const payload = JSON.stringify({ command });
     this.client.publish(topic, payload);
     return true;
+  }
+
+  publishSessionState(deviceId: string, session: Session | null): boolean {
+    if (!this.client?.connected) return false;
+
+    const topic = `luz/device/${deviceId}/session`;
+    const payload = JSON.stringify({
+      deviceId,
+      active: Boolean(session && !session.endedAt),
+      sessionId: session?.id ?? null,
+      startedAt: session?.startedAt ?? null,
+      endedAt: session?.endedAt ?? null,
+      patient: session?.patient
+        ? {
+            id: session.patient.id,
+            fullname: session.patient.user?.fullname ?? 'Paciente',
+          }
+        : null,
+      publishedAt: new Date().toISOString(),
+    });
+
+    this.client.publish(topic, payload, { retain: true });
+    return true;
+  }
+
+  async publishCurrentSessionState(deviceId: string): Promise<boolean> {
+    const session = await this.sessionService.findActiveByDevice(deviceId);
+    return this.publishSessionState(deviceId, session);
   }
 
   private parsePayload(raw: string): TelemetryPayload | null {

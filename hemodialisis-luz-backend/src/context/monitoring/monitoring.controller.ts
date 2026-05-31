@@ -29,6 +29,7 @@ export class MonitoringController {
       deviceId: DEVICE_ID,
     });
     this.monitoringService.publishControl(DEVICE_ID, 'start');
+    this.monitoringService.publishSessionState(DEVICE_ID, session);
     return session;
   }
 
@@ -41,6 +42,7 @@ export class MonitoringController {
     }
     const closedSession = await this.sessionService.closeSession(activeSession.id);
     this.monitoringService.publishControl(DEVICE_ID, 'stop');
+    this.monitoringService.publishSessionState(DEVICE_ID, null);
     return closedSession;
   }
 }

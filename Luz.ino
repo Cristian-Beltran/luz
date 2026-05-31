@@ -26,6 +26,8 @@ constexpr unsigned long STATUS_BLINK_MS = 300;
 constexpr unsigned long CALIBRATION_TIME_MS = 5000;
 constexpr uint8_t MLX90614_I2C_ADDRESS = 0x5A;
 
+//const char* WIFI_SSID = "iPhone de Mar";
+//const char* WIFI_PASSWORD = "1234marsucha";
 const char* WIFI_SSID = "Cordova hogar ext";
 const char* WIFI_PASSWORD = "4ndiNicol3";
 const char* MQTT_HOST = "broker.hivemq.com";

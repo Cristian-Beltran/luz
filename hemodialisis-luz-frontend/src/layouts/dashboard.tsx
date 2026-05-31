@@ -10,18 +10,18 @@ const DashboardLayout: React.FC = () => {
 
   return (
     <BaseLayout showThemeToggle={false}>
-      <div className="flex h-screen bg-background">
+      <div className="flex min-h-dvh bg-background">
         {/* Sidebar */}
         <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
         {/* Main Content */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex min-h-dvh min-w-0 flex-1 flex-col">
           {/* Header */}
           <Header onMenuClick={() => setSidebarOpen(true)} />
 
           {/* Page Content */}
-          <main className="flex-1 overflow-y-auto bg-muted/30 p-6">
-            <div className="max-w-7xl mx-auto">
+          <main className="min-w-0 flex-1 bg-muted/30 px-3 py-4 sm:px-4 md:px-5 lg:px-6">
+            <div className="mx-auto w-full max-w-7xl">
               <Outlet />
             </div>
           </main>

@@ -166,7 +166,7 @@ export function DataTable<TData>({
 
   const tableWrapperClass = maxHeight
     ? "overflow-auto custom-scrollbar"
-    : "overflow-hidden";
+    : "overflow-x-auto";
 
   return (
     <div className="space-y-4">
@@ -181,7 +181,7 @@ export function DataTable<TData>({
               className={tableWrapperClass}
               style={maxHeight ? { maxHeight } : undefined}
             >
-              <Table className="border-separate border-spacing-0 w-full">
+              <Table className="w-full min-w-[760px] border-separate border-spacing-0">
                 <TableHeader
                   className={`[&_tr]:border-0 ${headerSticky} ${stickyHeader ? "shadow-[inset_0_-1px_0_0_var(--border)]" : ""}`}
                 >
@@ -332,7 +332,7 @@ export function DataTable<TData>({
           </div>
 
           {/* Footer / Paginación */}
-          <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
             <div className="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs">
               <span className="opacity-70">Página</span>
               <span className="font-semibold">{currentPageIndex + 1}</span>
@@ -340,7 +340,7 @@ export function DataTable<TData>({
               <span className="font-semibold">{totalPages || 1}</span>
             </div>
 
-            <div className="flex items-center gap-6">
+            <div className="flex flex-wrap items-center gap-3 sm:gap-6">
               <div className="flex items-center gap-2">
                 <p className="text-sm font-medium">Items</p>
                 <Select

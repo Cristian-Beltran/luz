@@ -13,7 +13,7 @@ export default function DoctorFilter() {
             applySearch((e.target as HTMLInputElement).value);
           }
         }}
-        className="w-2xs"
+        className="w-full sm:w-72"
       />
     </div>
   );

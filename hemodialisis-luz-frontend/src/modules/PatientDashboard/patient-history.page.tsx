@@ -50,7 +50,7 @@ export default function PatientHistoryPage() {
             Resumen didactico de tus sesiones previas y evolucion.
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-3 md:grid-cols-4">
+        <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <Info title="Sesiones" value={summary.sessions} icon={<CalendarDays className="h-4 w-4" />} />
           <Info title="Lecturas" value={summary.records} icon={<Activity className="h-4 w-4" />} />
           <Info title="Promedio pulso" value={`${summary.avgPulse} bpm`} icon={<HeartPulse className="h-4 w-4" />} />
@@ -59,7 +59,7 @@ export default function PatientHistoryPage() {
       </Card>
 
       <Tabs defaultValue="charts">
-        <TabsList className="grid w-full max-w-sm grid-cols-2 rounded-xl bg-muted/60 p-1">
+        <TabsList className="grid w-full grid-cols-2 rounded-xl bg-muted/60 p-1 sm:max-w-sm">
           <TabsTrigger value="charts">Graficas</TabsTrigger>
           <TabsTrigger value="sessions">Sesiones</TabsTrigger>
         </TabsList>
@@ -91,7 +91,7 @@ function Info({
 }) {
   return (
     <div className="rounded-xl border border-muted/70 bg-card/80 p-3">
-      <div className="text-[11px] uppercase tracking-wide text-muted-foreground inline-flex items-center gap-1.5">{icon}{title}</div>
+      <div className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">{icon}{title}</div>
       <div className="text-lg font-semibold tracking-tight">{value}</div>
     </div>
   );

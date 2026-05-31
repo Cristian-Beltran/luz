@@ -20,37 +20,37 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
   }, [user?.fullname]);
 
   return (
-    <header className="sticky top-0 z-30 shadow-sm">
+    <header className="sticky top-0 z-20 border-b bg-background/95 shadow-sm">
       {/* Banda superior sutil (diferente al header anterior) */}
       <div className="h-1 w-full bg-gradient-to-r from-primary via-secondary to-primary/60" />
 
       {/* Contenido principal con layout centrado */}
-      <div className="bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 py-3">
-          <div className="grid grid-cols-3 items-center">
+      <div className="backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        <div className="mx-auto max-w-7xl px-3 py-3 sm:px-4 lg:px-6">
+          <div className="grid grid-cols-[auto,minmax(0,1fr),auto] items-center gap-3">
             {/* Izquierda: botón menú (mobile) */}
             <div className="flex items-center">
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={onMenuClick}
-                className="lg:hidden"
+                className="md:hidden"
               >
                 <Menu className="h-5 w-5" />
               </Button>
             </div>
 
             {/* Centro: branding (totalmente distinto) */}
-            <div className="flex flex-col items-center text-center">
-              <div className="inline-flex items-center gap-2">
+            <div className="min-w-0 text-center md:text-left">
+              <div className="inline-flex max-w-full items-center gap-2">
                 <div className="h-8 w-8 rounded-lg grid place-items-center bg-primary/10 text-primary">
                   <Droplet className="h-4 w-4" />
                 </div>
-                <h1 className="text-base sm:text-lg font-semibold tracking-tight">
+                <h1 className="truncate text-sm font-semibold tracking-tight sm:text-base lg:text-lg">
                   HemoSense · Multisensor No Invasivo
                 </h1>
               </div>
-              <p className="mt-1 text-xs text-muted-foreground">
+              <p className="mx-auto mt-1 max-w-xl truncate text-xs text-muted-foreground md:mx-0">
                 Monitoreo integral de parámetros sanguíneos (SpO₂, Hb estimada,
                 FC, PI, variabilidad)
               </p>
