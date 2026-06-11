@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import mqtt, { type MqttClient } from "mqtt";
 import {
   Activity,
@@ -46,7 +46,9 @@ type LivePoint = {
   ts: string;
   deviceId: string;
   pulse?: number;
+  pulseRaw?: number;
   spo2?: number;
+  spo2Raw?: number;
   temperatureC?: number;
   ambientTemperatureC?: number;
   systolic?: number;
@@ -83,12 +85,20 @@ function toNumber(value: unknown): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-function toPoint(payload: Record<string, unknown>): LivePoint {
+function toPoint(
+  payload: Record<string, unknown>,
+  smoothedPulse?: number,
+  smoothedSpo2?: number,
+): LivePoint {
+  const rawPulse = toNumber(payload.heartRateBpm);
+  const rawSpo2 = toNumber(payload.spo2);
   return {
     ts: new Date().toISOString(),
     deviceId: String(payload.deviceId ?? DEVICE_ID),
-    pulse: toNumber(payload.heartRateBpm),
-    spo2: toNumber(payload.spo2),
+    pulse: smoothedPulse ?? rawPulse,
+    pulseRaw: rawPulse,
+    spo2: smoothedSpo2 ?? rawSpo2,
+    spo2Raw: rawSpo2,
     temperatureC: toNumber(payload.temperatureC),
     ambientTemperatureC: toNumber(payload.ambientTemperatureC),
     systolic: toNumber(payload.estimatedSystolicMmHg),
@@ -165,6 +175,12 @@ export default function PublicMonitoringPage() {
   const [now, setNow] = useState(Date.now());
   const [powerLoading, setPowerLoading] = useState(false);
 
+  const SMOOTHING_ALPHA = 0.15;
+  const smoothedPulseRef = useRef<number | undefined>(undefined);
+  const smoothedSpo2Ref = useRef<number | undefined>(undefined);
+  const respirationWindowRef = useRef<number[]>([]);
+  const RESP_WINDOW_SIZE = 20;
+
   useEffect(() => {
     const client: MqttClient = mqtt.connect(MQTT_WS_URL, {
       clientId: `public-monitor-${Math.random().toString(16).slice(2, 8)}`,
@@ -185,7 +201,39 @@ export default function PublicMonitoringPage() {
       try {
         const payload = JSON.parse(message.toString()) as Record<string, unknown>;
         if (topic === TELEMETRY_TOPIC) {
-          setPoints((prev) => [...prev, toPoint(payload)].slice(-160));
+          const rawPulse = toNumber(payload.heartRateBpm);
+          const rawSpo2 = toNumber(payload.spo2);
+
+          let smoothedPulse: number | undefined;
+          let smoothedSpo2: number | undefined;
+
+          if (rawPulse !== undefined) {
+            if (smoothedPulseRef.current === undefined) {
+              smoothedPulseRef.current = rawPulse;
+            } else {
+              smoothedPulseRef.current =
+                smoothedPulseRef.current * (1 - SMOOTHING_ALPHA) + rawPulse * SMOOTHING_ALPHA;
+            }
+            smoothedPulse = smoothedPulseRef.current;
+          }
+
+          if (rawSpo2 !== undefined) {
+            if (smoothedSpo2Ref.current === undefined) {
+              smoothedSpo2Ref.current = rawSpo2;
+            } else {
+              smoothedSpo2Ref.current =
+                smoothedSpo2Ref.current * (1 - SMOOTHING_ALPHA) + rawSpo2 * SMOOTHING_ALPHA;
+            }
+            smoothedSpo2 = smoothedSpo2Ref.current;
+          }
+
+          const respDetected = Boolean(payload.respirationDetected);
+          respirationWindowRef.current.push(respDetected ? 1 : 0);
+          if (respirationWindowRef.current.length > RESP_WINDOW_SIZE) {
+            respirationWindowRef.current.shift();
+          }
+
+          setPoints((prev) => [...prev, toPoint(payload, smoothedPulse, smoothedSpo2)].slice(-160));
         }
         if (topic === SESSION_TOPIC) {
           setSession(toSessionState(payload));
@@ -225,9 +273,28 @@ export default function PublicMonitoringPage() {
         spo2: point.spo2 ?? null,
         temp: point.temperatureC ?? null,
         ambient: point.ambientTemperatureC ?? null,
+        systolic: point.systolic ?? null,
+        diastolic: point.diastolic ?? null,
+        respiration: point.respirationDetected ? 1 : 0,
       })),
     [points],
   );
+
+  const respirationStrength = useMemo(() => {
+    const w = respirationWindowRef.current;
+    if (w.length === 0) return 0;
+    return (w.reduce((a, b) => a + b, 0) / w.length) * 100;
+  }, [points]);
+
+  const pressureDomain = useMemo(() => {
+    const sys = chartData.map((d) => d.systolic).filter((v) => v !== null) as number[];
+    const dia = chartData.map((d) => d.diastolic).filter((v) => v !== null) as number[];
+    const all = [...sys, ...dia];
+    if (all.length === 0) return [0, 100];
+    const mn = Math.min(...all);
+    const mx = Math.max(...all);
+    return [mn - 20, mx + 5];
+  }, [chartData]);
 
   const onPower = async (state: "on" | "off") => {
     setPowerLoading(true);
@@ -290,15 +357,40 @@ export default function PublicMonitoringPage() {
               </CardContent>
             </Card>
 
-            <MetricCard
-              label="Respiracion"
-              icon={<Waves className="h-4 w-4" />}
-              value={respirationOk ? 1 : 0}
-              displayValue={respirationOk ? "OK" : "NO"}
-              unit=""
-              state={respirationOk ? "ok" : last?.respirationMissing ? "alert" : "na"}
-              progress={respirationOk ? 100 : 0}
-            />
+            <Card className="border-white/10 bg-white/[0.06] text-slate-100 shadow-xl">
+              <CardContent className="p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-slate-300">
+                    <Waves className="h-4 w-4" />
+                    Respiracion / Aire
+                  </span>
+                  <ClinicalStatusBadge state={respirationOk ? "ok" : last?.respirationMissing ? "alert" : "na"} />
+                </div>
+                <div className="mt-1.5 flex items-baseline gap-2">
+                  <span className="text-2xl font-semibold leading-none">
+                    {respirationOk ? "Detectada" : last?.respirationMissing ? "SIN AIRE" : "En observacion"}
+                  </span>
+                </div>
+                <div className="mt-2 flex items-center gap-2">
+                  <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-slate-700">
+                    <div
+                      className="h-full rounded-full transition-all duration-300"
+                      style={{
+                        width: `${respirationStrength}%`,
+                        background:
+                          respirationStrength > 60
+                            ? "linear-gradient(90deg, #22c55e, #16a34a)"
+                            : respirationStrength > 20
+                              ? "linear-gradient(90deg, #eab308, #ca8a04)"
+                              : "linear-gradient(90deg, #ef4444, #dc2626)",
+                      }}
+                    />
+                  </div>
+                  <span className="text-xs font-medium text-slate-400">{respirationStrength.toFixed(0)}%</span>
+                </div>
+                <div className="mt-1.5 text-[10px] text-slate-500">Actividad respiratoria (ultimos {RESP_WINDOW_SIZE} ciclos)</div>
+              </CardContent>
+            </Card>
 
             <Card className="min-h-0 border-white/10 bg-white/[0.06] text-slate-100 shadow-xl">
               <CardContent className="flex h-full flex-col justify-center gap-2 p-3 text-xs text-slate-300">
@@ -421,6 +513,22 @@ export default function PublicMonitoringPage() {
                   { key: "ambient", name: "Ambiente", color: "#a78bfa" },
                 ]}
               />
+              <ChartCard
+                title="Respiracion"
+                data={chartData}
+                lines={[
+                  { key: "respiration", name: "Aire", color: "#22d3ee" },
+                ]}
+              />
+              <ChartCard
+                title="Presion"
+                data={chartData}
+                lines={[
+                  { key: "systolic", name: "Sistolica", color: "#f87171" },
+                  { key: "diastolic", name: "Diastolica", color: "#c084fc" },
+                ]}
+                domain={pressureDomain as [number, number]}
+              />
             </div>
           </section>
         </section>
@@ -522,10 +630,12 @@ function ChartCard({
   title,
   data,
   lines,
+  domain,
 }: {
   title: string;
   data: Array<Record<string, string | number | null>>;
   lines: Array<{ key: string; name: string; color: string }>;
+  domain?: [number, number];
 }) {
   return (
     <Card className="flex min-h-0 flex-col border-white/10 bg-white/[0.06] text-slate-100 shadow-xl">
@@ -537,7 +647,7 @@ function ChartCard({
           <LineChart data={data}>
             <CartesianGrid stroke="#334155" strokeDasharray="3 3" />
             <XAxis dataKey="t" stroke="#94a3b8" tick={{ fontSize: 10 }} />
-            <YAxis stroke="#94a3b8" tick={{ fontSize: 10 }} width={34} />
+            <YAxis stroke="#94a3b8" tick={{ fontSize: 10 }} width={34} domain={domain} />
             <Tooltip
               contentStyle={{
                 background: "#020617",
