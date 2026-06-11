@@ -1,6 +1,3 @@
-import { IsUUID } from 'class-validator';
+import { CreateSessionDto } from 'src/app/sesion/dtos/create-session.dto';
 
-export class StartMonitoringDto {
-  @IsUUID('4')
-  patientId: string;
-}
+export class StartMonitoringDto extends CreateSessionDto {}

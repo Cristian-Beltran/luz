@@ -21,8 +21,10 @@ import {
 } from "recharts";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import axios from "@/lib/axios";
 import { ClinicalStatusBadge } from "@/components/clinical/clinical-ui";
 import {
   diastolicState,
@@ -37,6 +39,7 @@ const MQTT_WS_URL = "wss://broker.hivemq.com:8884/mqtt";
 const DEVICE_ID = "esp32-luz-01";
 const TELEMETRY_TOPIC = `luz/device/${DEVICE_ID}/telemetry`;
 const SESSION_TOPIC = `luz/device/${DEVICE_ID}/session`;
+const AI_TOPIC = `luz/device/${DEVICE_ID}/ai`;
 const DEVICE_TIMEOUT_MS = 12_000;
 
 type LivePoint = {
@@ -63,8 +66,16 @@ type SessionState = {
   sessionId: string | null;
   startedAt: string | null;
   endedAt: string | null;
+  powerOn: boolean;
   patient: { id: string; fullname: string } | null;
   publishedAt: string;
+};
+
+type AiMessage = {
+  id: string;
+  message: string;
+  source: string;
+  createdAt: string;
 };
 
 function toNumber(value: unknown): number | undefined {
@@ -100,6 +111,7 @@ function toSessionState(payload: Record<string, unknown>): SessionState {
     sessionId: typeof payload.sessionId === "string" ? payload.sessionId : null,
     startedAt: typeof payload.startedAt === "string" ? payload.startedAt : null,
     endedAt: typeof payload.endedAt === "string" ? payload.endedAt : null,
+    powerOn: Boolean(payload.powerOn),
     patient: patient
       ? {
           id: String(patient.id ?? ""),
@@ -111,6 +123,20 @@ function toSessionState(payload: Record<string, unknown>): SessionState {
         ? payload.publishedAt
         : new Date().toISOString(),
   };
+}
+
+function toAiMessages(payload: Record<string, unknown>): AiMessage[] {
+  const messages = Array.isArray(payload.messages) ? payload.messages : [];
+  return messages.flatMap((message) => {
+    if (!message || typeof message !== "object") return [];
+    const entry = message as Record<string, unknown>;
+    return [{
+      id: String(entry.id ?? Math.random().toString(16).slice(2, 8)),
+      message: String(entry.message ?? ""),
+      source: String(entry.source ?? "openai"),
+      createdAt: String(entry.createdAt ?? new Date().toISOString()),
+    }];
+  });
 }
 
 function formatTime(value?: string | null) {
@@ -135,7 +161,9 @@ export default function PublicMonitoringPage() {
   const [mqttOnline, setMqttOnline] = useState(false);
   const [points, setPoints] = useState<LivePoint[]>([]);
   const [session, setSession] = useState<SessionState | null>(null);
+  const [aiMessages, setAiMessages] = useState<AiMessage[]>([]);
   const [now, setNow] = useState(Date.now());
+  const [powerLoading, setPowerLoading] = useState(false);
 
   useEffect(() => {
     const client: MqttClient = mqtt.connect(MQTT_WS_URL, {
@@ -146,7 +174,7 @@ export default function PublicMonitoringPage() {
 
     client.on("connect", () => {
       setMqttOnline(true);
-      client.subscribe([TELEMETRY_TOPIC, SESSION_TOPIC]);
+      client.subscribe([TELEMETRY_TOPIC, SESSION_TOPIC, AI_TOPIC]);
     });
 
     client.on("offline", () => setMqttOnline(false));
@@ -161,6 +189,9 @@ export default function PublicMonitoringPage() {
         }
         if (topic === SESSION_TOPIC) {
           setSession(toSessionState(payload));
+        }
+        if (topic === AI_TOPIC) {
+          setAiMessages(toAiMessages(payload));
         }
       } catch {
         return;
@@ -198,6 +229,15 @@ export default function PublicMonitoringPage() {
     [points],
   );
 
+  const onPower = async (state: "on" | "off") => {
+    setPowerLoading(true);
+    try {
+      await axios.patch("/monitoring/power", { state });
+    } finally {
+      setPowerLoading(false);
+    }
+  };
+
   return (
     <main className="h-dvh overflow-hidden bg-slate-950 text-slate-100">
       <div className="flex h-full flex-col gap-2 p-2 sm:p-3">
@@ -220,10 +260,11 @@ export default function PublicMonitoringPage() {
                   <span>Inicio {formatTime(session?.startedAt)}</span>
                   <span>ID {session?.sessionId ? session.sessionId.slice(0, 8) : "sin dato"}</span>
                   <span>Ultima {formatTime(last?.ts)}</span>
+                  <span>Sistema {session?.powerOn ? "encendido" : "apagado"}</span>
                 </div>
               </div>
               <div className="hidden text-right text-xs text-slate-400 md:block">
-                <div>Monitor MQTT</div>
+                <div>Comunicacion bidireccional</div>
                 <div>{DEVICE_ID}</div>
               </div>
             </CardContent>
@@ -243,6 +284,7 @@ export default function PublicMonitoringPage() {
               <CardContent className="grid grid-cols-2 gap-2 p-3 text-xs">
                 <MiniInfo label="Dedo" value={last?.fingerDetected ? "Si" : "No"} active={Boolean(last?.fingerDetected)} />
                 <MiniInfo label="Monitoreo" value={last?.monitoringEnabled ? "Activo" : "Espera"} active={Boolean(last?.monitoringEnabled)} />
+                <MiniInfo label="Sistema" value={session?.powerOn ? "Encendido" : "Apagado"} active={Boolean(session?.powerOn)} />
                 <MiniInfo label="Calibracion" value={last?.calibrationComplete ? "Lista" : "Pendiente"} active={Boolean(last?.calibrationComplete)} />
                 <MiniInfo label="Paquetes" value={points.length} active={points.length > 0} />
               </CardContent>
@@ -274,6 +316,45 @@ export default function PublicMonitoringPage() {
                 </div>
                 <div className="truncate rounded-lg border border-white/10 bg-black/20 px-3 py-2">
                   Device {last?.deviceId ?? DEVICE_ID}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    variant="outline"
+                    className="border-white/10 bg-black/20 text-slate-100 hover:bg-black/30"
+                    disabled={!session?.active || session?.powerOn || powerLoading}
+                    onClick={() => void onPower("on")}
+                  >
+                    Encender
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="border-white/10 bg-black/20 text-slate-100 hover:bg-black/30"
+                    disabled={!session?.active || !session?.powerOn || powerLoading}
+                    onClick={() => void onPower("off")}
+                  >
+                    Apagar
+                  </Button>
+                </div>
+                <div className="rounded-lg border border-cyan-400/20 bg-cyan-400/5 px-3 py-2">
+                  <div className="mb-2 text-[10px] uppercase tracking-wide text-cyan-200">
+                    Comunicacion bidireccional
+                  </div>
+                  <div className="space-y-2">
+                    {aiMessages.length ? (
+                      aiMessages.slice().reverse().map((message) => (
+                        <div key={message.id} className="rounded-md border border-white/10 bg-black/20 px-2 py-2 text-[11px] leading-5 text-slate-200">
+                          <div className="mb-1 text-[10px] uppercase text-cyan-300">
+                            IA {formatTime(message.createdAt)}
+                          </div>
+                          {message.message}
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-[11px] text-slate-400">
+                        Esperando mensajes de analisis clinico.
+                      </div>
+                    )}
+                  </div>
                 </div>
               </CardContent>
             </Card>

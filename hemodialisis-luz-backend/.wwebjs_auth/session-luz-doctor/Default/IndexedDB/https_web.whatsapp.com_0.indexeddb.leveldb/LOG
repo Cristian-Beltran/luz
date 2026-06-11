@@ -1,0 +1,47 @@
+2026/06/11-05:58:16.781 6fc6d Reusing MANIFEST /home/cristian/software/Univalle-01-2026/Luz/hemodialisis-luz-backend/.wwebjs_auth/session-luz-doctor/Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/06/11-05:58:16.782 6fc6d Recovering log #573
+2026/06/11-05:58:16.793 6fc6d Reusing old log /home/cristian/software/Univalle-01-2026/Luz/hemodialisis-luz-backend/.wwebjs_auth/session-luz-doctor/Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb/000573.log 
+2026/06/11-05:58:16.793 6fc6d Delete type=2 #561
+2026/06/11-05:58:16.794 6fc6d Delete type=2 #562
+2026/06/11-05:58:16.794 6fc6d Delete type=2 #563
+2026/06/11-05:58:16.794 6fc6d Delete type=2 #564
+2026/06/11-05:58:16.794 6fc6d Delete type=2 #565
+2026/06/11-05:58:16.794 6fc6d Delete type=2 #566
+2026/06/11-05:58:16.794 6fc6d Delete type=2 #567
+2026/06/11-05:58:16.794 6fc6d Delete type=2 #568
+2026/06/11-05:58:16.794 6fc6d Delete type=2 #569
+2026/06/11-05:58:16.794 6fc6d Delete type=2 #570
+2026/06/11-05:58:16.794 6fc6d Delete type=2 #575
+2026/06/11-05:58:20.288 6fc6d Level-0 table #590: started
+2026/06/11-05:58:20.297 6fc6d Level-0 table #590: 216859 bytes OK
+2026/06/11-05:58:20.304 6fc6d Delete type=0 #573
+2026/06/11-05:58:20.304 6fc6d Manual compaction at level-0 from '\x00/\x00\x00\x00' @ 72057594037927935 : 1 .. '\x000\x00\x00\x00' @ 0 : 0; will stop at '\x00/\x00\x00\x05' @ 2117558 : 1
+2026/06/11-05:58:20.304 6fc6d Compacting 1@0 + 1@1 files
+2026/06/11-05:58:20.316 6fc6d Generated table #591@0: 4511 keys, 104768 bytes
+2026/06/11-05:58:20.335 6fc6d Generated table #592@0: 9925 keys, 193024 bytes
+2026/06/11-05:58:20.335 6fc6d Compacted 1@0 + 1@1 files => 297792 bytes
+2026/06/11-05:58:20.342 6fc6d compacted to: files[ 0 2 15 0 0 0 0 ]
+2026/06/11-05:58:20.343 6fc6d Delete type=2 #590
+2026/06/11-05:58:20.345 6fc6d Manual compaction at level-0 from '\x00/\x00\x00\x05' @ 2117558 : 1 .. '\x000\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/06/11-05:58:20.613 6fc6f Compacting 1@1 + 8@2 files
+2026/06/11-05:58:20.721 6fc6f Generated table #593@1: 51272 keys, 2217409 bytes
+2026/06/11-05:58:20.765 6fc6f Generated table #594@1: 12752 keys, 2162362 bytes
+2026/06/11-05:58:20.797 6fc6f Generated table #595@1: 1951 keys, 2141864 bytes
+2026/06/11-05:58:20.835 6fc6f Generated table #596@1: 2598 keys, 2150991 bytes
+2026/06/11-05:58:20.871 6fc6f Generated table #597@1: 2191 keys, 2150298 bytes
+2026/06/11-05:58:20.923 6fc6f Generated table #598@1: 8179 keys, 2165713 bytes
+2026/06/11-05:58:21.051 6fc6f Generated table #599@1: 29844 keys, 2261757 bytes
+2026/06/11-05:58:21.147 6fc6f Generated table #600@1: 21072 keys, 2207891 bytes
+2026/06/11-05:58:21.153 6fc6f Generated table #601@1: 31 keys, 55169 bytes
+2026/06/11-05:58:21.153 6fc6f Compacted 1@1 + 8@2 files => 17513454 bytes
+2026/06/11-05:58:21.159 6fc6f compacted to: files[ 0 1 16 0 0 0 0 ]
+2026/06/11-05:58:21.160 6fc6f Delete type=2 #576
+2026/06/11-05:58:21.160 6fc6f Delete type=2 #577
+2026/06/11-05:58:21.160 6fc6f Delete type=2 #578
+2026/06/11-05:58:21.160 6fc6f Delete type=2 #579
+2026/06/11-05:58:21.161 6fc6f Delete type=2 #580
+2026/06/11-05:58:21.161 6fc6f Delete type=2 #581
+2026/06/11-05:58:21.161 6fc6f Delete type=2 #582
+2026/06/11-05:58:21.161 6fc6f Delete type=2 #583
+2026/06/11-05:58:21.161 6fc6f Delete type=2 #584
+2026/06/11-05:58:21.161 6fc6f Delete type=2 #591

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import * as fs from 'fs';
 import * as PdfPrinter from 'pdfmake/src/printer';
 import * as path from 'path';
 import type { TDocumentDefinitions, TFontDictionary } from 'pdfmake/interfaces';
@@ -17,15 +18,26 @@ interface PdfMetaInfo {
 export class PdfService {
   private readonly fonts: TFontDictionary = {
     Roboto: {
-      normal: path.resolve(__dirname, '../../assets/fonts/Roboto-Regular.ttf'),
-      bold: path.resolve(__dirname, '../../assets/fonts/Roboto-Bold.ttf'),
-      italics: path.resolve(__dirname, '../../assets/fonts/Roboto-Italic.ttf'),
-      bolditalics: path.resolve(
-        __dirname,
-        '../../assets/fonts/Roboto-BoldItalic.ttf',
-      ),
+      normal: this.resolveFontPath('Roboto-Regular.ttf'),
+      bold: this.resolveFontPath('Roboto-Bold.ttf'),
+      italics: this.resolveFontPath('Roboto-Italic.ttf'),
+      bolditalics: this.resolveFontPath('Roboto-BoldItalic.ttf'),
     },
   };
+
+  private resolveFontPath(fileName: string): string {
+    const candidates = [
+      path.resolve(process.cwd(), 'dist/assets/fonts', fileName),
+      path.resolve(process.cwd(), 'src/assets/fonts', fileName),
+    ];
+
+    const existing = candidates.find((candidate) => fs.existsSync(candidate));
+    if (existing) {
+      return existing;
+    }
+
+    return candidates[0];
+  }
 
   async generatePdf(
     getDefinition: () => TDocumentDefinitions,

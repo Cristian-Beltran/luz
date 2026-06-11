@@ -13,5 +13,8 @@ export default registerAs('config', () => {
     },
     apiKey: 'local-api-key',
     jwtSecret: 'local-dev-jwt-secret',
+    openAiApiKey: process.env.OPENAI_API_KEY ?? '',
+    whatsAppDefaultCountryCode:
+      process.env.WHATSAPP_DEFAULT_COUNTRY_CODE ?? '57',
   };
 });

@@ -12,8 +12,25 @@ export const columns: ColumnDef<Patient>[] = [
     header: () => "Correo",
   },
   {
-    accessorKey: "user.address",
-    header: () => "Dirreción",
+    accessorKey: "age",
+    header: () => "Edad",
+  },
+  {
+    accessorKey: "sex",
+    header: () => "Sexo",
+  },
+  {
+    accessorKey: "patientType",
+    header: () => "Tipo",
+    cell: ({ row }) => String(row.getValue("patientType") ?? "").replace("_", " "),
+  },
+  {
+    accessorKey: "referenceName",
+    header: () => "Referencia",
+  },
+  {
+    accessorKey: "referencePhone",
+    header: () => "Telefono ref.",
   },
 
   {

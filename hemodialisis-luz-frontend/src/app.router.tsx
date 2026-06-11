@@ -3,6 +3,7 @@ import { Navigate } from "react-router-dom";
 import DashboardLayout from "./layouts/dashboard";
 import DashboardPage from "./modules/Dashboard/dashboard-page";
 import LoginPage from "./pages/login";
+import PatientRegisterPage from "./pages/patient-register";
 import NotFoundPage from "./pages/not-found";
 import MonitoringPage from "./modules/Monitoring/monitoring";
 import PublicMonitoringPage from "./modules/Monitoring/public-monitoring";
@@ -24,6 +25,7 @@ function RoleHome() {
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
+  { path: "/register/patient", element: <PatientRegisterPage /> },
   { path: "/public/monitoring", element: <PublicMonitoringPage /> },
   {
     path: "/",

@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/form";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2, AlertCircle, Mail, Lock, Droplet } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuthStore } from "@/auth/useAuth";
 
 const formSchema = z.object({
@@ -86,9 +86,10 @@ export default function LoginPage() {
               <Droplet className="h-4 w-4" />
             </div>
             <div className="leading-tight">
-              <h1 className="text-sm font-semibold tracking-tight"></h1>
-              Sistema Multisensor No Invasivo para Monitoreo Integral de
-              Parámetros Sanguíneos
+              <h1 className="text-sm font-semibold tracking-tight">
+                Prototipo de monitor multiparametrico para pacientes en estado de
+                hemodialisis
+              </h1>
               <p className="text-[11px] text-muted-foreground">
                 Ingreso seguro
               </p>
@@ -212,6 +213,11 @@ export default function LoginPage() {
 
               <p className="text-[11px] text-muted-foreground text-center">
                 Al continuar aceptas las políticas de privacidad y uso de datos.
+              </p>
+              <p className="text-sm text-center">
+                <Link className="text-primary hover:underline" to="/register/patient">
+                  Crear cuenta para pacientes
+                </Link>
               </p>
             </form>
           </Form>

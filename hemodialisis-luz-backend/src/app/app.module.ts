@@ -7,6 +7,7 @@ import { LoggerModule } from 'src/context/shared/logger';
 import { AuthModule } from 'src/context/auth/auth.module';
 import { PdfModule } from 'src/context/pdf/pdf.module';
 import { MonitoringModule } from 'src/context/monitoring/monitoring.module';
+import { WhatsAppModule } from 'src/context/whatsapp/whatsapp.module';
 import { UsersModule } from './users/user.module';
 import { SessionModule } from './sesion/sesion.module';
 
@@ -23,6 +24,7 @@ import { SessionModule } from './sesion/sesion.module';
     AuthModule,
     SessionModule,
     MonitoringModule,
+    WhatsAppModule,
   ],
 })
 export class AppModule {}

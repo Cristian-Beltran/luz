@@ -30,6 +30,18 @@ export class PatientService {
     });
     const patient = this.patientRepository.create({
       user,
+      referenceName: dto.referenceName,
+      age: dto.age,
+      sex: dto.sex,
+      patientType: dto.patientType,
+      referencePhone: dto.referencePhone,
+      baseDisease: dto.baseDisease,
+      knownAllergies: dto.knownAllergies,
+      hasDiabetes: dto.hasDiabetes,
+      hasHypertension: dto.hasHypertension,
+      hasHeartDisease: dto.hasHeartDisease,
+      hasAnemia: dto.hasAnemia,
+      hasPreviousInfections: dto.hasPreviousInfections,
     });
     return this.patientRepository.save(patient);
   }
@@ -56,6 +68,22 @@ export class PatientService {
       fullname: dto.fullname,
       email: dto.email,
       address: dto.address,
+    });
+
+    Object.assign(patient, {
+      referenceName: dto.referenceName ?? patient.referenceName,
+      age: dto.age ?? patient.age,
+      sex: dto.sex ?? patient.sex,
+      patientType: dto.patientType ?? patient.patientType,
+      referencePhone: dto.referencePhone ?? patient.referencePhone,
+      baseDisease: dto.baseDisease ?? patient.baseDisease,
+      knownAllergies: dto.knownAllergies ?? patient.knownAllergies,
+      hasDiabetes: dto.hasDiabetes ?? patient.hasDiabetes,
+      hasHypertension: dto.hasHypertension ?? patient.hasHypertension,
+      hasHeartDisease: dto.hasHeartDisease ?? patient.hasHeartDisease,
+      hasAnemia: dto.hasAnemia ?? patient.hasAnemia,
+      hasPreviousInfections:
+        dto.hasPreviousInfections ?? patient.hasPreviousInfections,
     });
 
     await this.patientRepository.save(patient);

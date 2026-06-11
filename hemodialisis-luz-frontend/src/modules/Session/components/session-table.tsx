@@ -66,12 +66,20 @@ export function SessionsTable({
   page,
   pageSize,
   onPageChange,
+  onDownloadReport,
+  onSendReport,
+  downloadingSessionId,
+  sendingSessionId,
 }: {
   sessions: Session[];
   isLoading: boolean;
   page: number;
   pageSize: number;
   onPageChange: (page: number) => void;
+  onDownloadReport?: (sessionId: string) => void;
+  onSendReport?: (sessionId: string) => void;
+  downloadingSessionId?: string | null;
+  sendingSessionId?: string | null;
 }) {
   const [open, setOpen] = useState<string | undefined>();
 
@@ -208,6 +216,22 @@ export function SessionsTable({
               <AccordionContent className="px-6">
                 <Separator className="my-2" />
 
+                <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  <InfoBlock title="Peso antes / despues / seco" value={`${s.weightBefore ?? "-"} / ${s.weightAfter ?? "-"} / ${s.dryWeight ?? "-"}`} />
+                  <InfoBlock title="Duracion" value={`${s.sessionDurationMinutes ?? "-"} min`} />
+                  <InfoBlock title="Sintomas reportados" value={s.reportedSymptoms ?? "Sin dato"} />
+                  <InfoBlock title="Sintomas marcados" value={[
+                    s.dizziness ? "mareos" : null,
+                    s.nausea ? "nausea" : null,
+                    s.cramps ? "calambres" : null,
+                    s.pain ? "dolor" : null,
+                    s.shortnessOfBreath ? "falta de aire" : null,
+                    s.weakness ? "debilidad" : null,
+                    s.chills ? "escalofrios" : null,
+                  ].filter(Boolean).join(", ") || "Ninguno"} />
+                  <InfoBlock title="Observaciones del personal" value={s.staffObservations ?? "Sin observaciones"} />
+                </div>
+
                 {/* Mini KPIs de la sesión */}
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                   <MetricCompact
@@ -300,6 +324,24 @@ export function SessionsTable({
                       </Card>
                     );
                   })}
+                </div>
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onDownloadReport?.(s.id)}
+                    disabled={downloadingSessionId === s.id}
+                  >
+                    {downloadingSessionId === s.id ? "Generando PDF..." : "Descargar PDF"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => onSendReport?.(s.id)}
+                    disabled={sendingSessionId === s.id}
+                  >
+                    {sendingSessionId === s.id ? "Enviando..." : "Enviar por WhatsApp"}
+                  </Button>
                 </div>
               </AccordionContent>
             </AccordionItem>
@@ -406,6 +448,15 @@ function Chip({ label, value }: { label: string; value: number | null }) {
       <span className="font-mono text-[12px]">
         {value == null ? "—" : value.toFixed(0)}
       </span>
+    </div>
+  );
+}
+
+function InfoBlock({ title, value }: { title: string; value: string }) {
+  return (
+    <div className="rounded-lg border p-3 text-sm">
+      <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">{title}</div>
+      <div>{value}</div>
     </div>
   );
 }

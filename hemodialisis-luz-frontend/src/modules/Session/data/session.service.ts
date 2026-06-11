@@ -35,4 +35,21 @@ export const sessionService = {
     const res = await axios.get(`${BASE_URL}/by-patient/${patientId}`);
     return res.data;
   },
+  downloadReport: async (
+    sessionId: string,
+  ): Promise<{ blob: Blob; fileName: string | null }> => {
+    const res = await axios.get(`${BASE_URL}/${sessionId}/report`, {
+      responseType: "blob",
+    });
+    const disposition = String(res.headers["content-disposition"] ?? "");
+    const match = disposition.match(/filename="?([^\"]+)"?/i);
+    return {
+      blob: res.data,
+      fileName: match?.[1] ?? null,
+    };
+  },
+  sendReport: async (sessionId: string): Promise<{ ok: boolean }> => {
+    const res = await axios.post(`/whatsapp/sessions/${sessionId}/report`);
+    return res.data;
+  },
 };

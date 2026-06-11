@@ -1,7 +1,9 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { connect, MqttClient } from 'mqtt';
 import { Session } from 'src/app/sesion/entities/session.entity';
 import { SessionService } from 'src/app/sesion/services/session.service';
+import { SessionAiMessage } from 'src/app/sesion/entities/session-ai-message.entity';
 
 type TelemetryPayload = {
   deviceId?: string;
@@ -26,12 +28,21 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
   private client: MqttClient | null = null;
   private readonly persistIntervalMs = 10_000;
   private readonly espTimeoutMs = 15_000;
+  private readonly aiIntervalMs = 60_000;
+  private readonly aiRateLimitCooldownMs = 15 * 60_000;
   private lastSeenAt: Date | null = null;
   private lastPersistAtBySession = new Map<string, number>();
+  private lastAiAtBySession = new Map<string, number>();
+  private aiBlockedUntilBySession = new Map<string, number>();
+  private generatingAiBySession = new Set<string>();
+  private devicePowerByDevice = new Map<string, boolean>();
   private lastTelemetry: (TelemetryPayload & { deviceId: string; receivedAt: string }) | null =
     null;
 
-  constructor(private readonly sessionService: SessionService) {}
+  constructor(
+    private readonly sessionService: SessionService,
+    private readonly configService: ConfigService,
+  ) {}
 
   onModuleInit() {
     const url = 'mqtt://broker.hivemq.com:1883';
@@ -48,6 +59,7 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
         else this.logger.log(`Subscribed to ${topic}`);
       });
       void this.publishCurrentSessionState('esp32-luz-01');
+      void this.publishCurrentAiInsights('esp32-luz-01');
     });
 
     this.client.on('message', async (topicName, buffer) => {
@@ -63,6 +75,10 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
       }
 
       const sanitizedPayload = this.sanitizePayload(payload);
+      this.devicePowerByDevice.set(
+        deviceId,
+        Boolean(sanitizedPayload.monitoringEnabled),
+      );
       this.lastTelemetry = {
         ...sanitizedPayload,
         deviceId,
@@ -94,6 +110,8 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
         warningActive: Boolean(sanitizedPayload.warningActive),
         alertActive: Boolean(sanitizedPayload.alertActive),
       });
+
+      void this.generateAiInsightIfNeeded(deviceId, session.id, sanitizedPayload);
     });
 
     this.client.on('error', (err) => {
@@ -112,13 +130,21 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
 
     return {
       espOnline,
+      devicePowerOn: this.devicePowerByDevice.get('esp32-luz-01') ?? false,
       lastSeenAt: this.lastSeenAt?.toISOString() ?? null,
       lastTelemetry: this.lastTelemetry,
       persistIntervalSeconds: this.persistIntervalMs / 1000,
     };
   }
 
-  publishControl(deviceId: string, command: 'start' | 'stop'): boolean {
+  setDevicePower(deviceId: string, powerOn: boolean) {
+    this.devicePowerByDevice.set(deviceId, powerOn);
+  }
+
+  publishControl(
+    deviceId: string,
+    command: 'start' | 'stop' | 'power_on' | 'power_off',
+  ): boolean {
     if (!this.client?.connected) return false;
     const topic = `luz/device/${deviceId}/control`;
     const payload = JSON.stringify({ command });
@@ -136,6 +162,7 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
       sessionId: session?.id ?? null,
       startedAt: session?.startedAt ?? null,
       endedAt: session?.endedAt ?? null,
+      powerOn: this.devicePowerByDevice.get(deviceId) ?? false,
       patient: session?.patient
         ? {
             id: session.patient.id,
@@ -152,6 +179,37 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
   async publishCurrentSessionState(deviceId: string): Promise<boolean> {
     const session = await this.sessionService.findActiveByDevice(deviceId);
     return this.publishSessionState(deviceId, session);
+  }
+
+  publishAiInsights(deviceId: string, messages: SessionAiMessage[]): boolean {
+    if (!this.client?.connected) return false;
+
+    const topic = `luz/device/${deviceId}/ai`;
+    this.client.publish(
+      topic,
+      JSON.stringify({
+        deviceId,
+        messages: messages.map((message) => ({
+          id: message.id,
+          message: message.message,
+          source: message.source,
+          createdAt: message.createdAt,
+        })),
+        publishedAt: new Date().toISOString(),
+      }),
+      { retain: true },
+    );
+    return true;
+  }
+
+  async publishCurrentAiInsights(deviceId: string): Promise<boolean> {
+    const session = await this.sessionService.findActiveByDevice(deviceId);
+    if (!session) {
+      return this.publishAiInsights(deviceId, []);
+    }
+
+    const messages = await this.sessionService.getAiMessages(session.id, 5);
+    return this.publishAiInsights(deviceId, messages.reverse());
   }
 
   private parsePayload(raw: string): TelemetryPayload | null {
@@ -194,5 +252,149 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
   private toFiniteNumber(value: number | undefined): number | undefined {
     const n = Number(value);
     return Number.isFinite(n) ? n : undefined;
+  }
+
+  private async generateAiInsightIfNeeded(
+    deviceId: string,
+    sessionId: string,
+    payload: TelemetryPayload,
+  ) {
+    const apiKey = this.configService.get<string>('config.openAiApiKey') ?? '';
+    if (!apiKey) return;
+
+    const now = Date.now();
+    const blockedUntil = this.aiBlockedUntilBySession.get(sessionId) ?? 0;
+    if (blockedUntil > now) return;
+
+    const lastAt = this.lastAiAtBySession.get(sessionId) ?? 0;
+    if (now - lastAt < this.aiIntervalMs) return;
+    if (this.generatingAiBySession.has(sessionId)) return;
+
+    this.lastAiAtBySession.set(sessionId, now);
+    this.generatingAiBySession.add(sessionId);
+
+    try {
+      const session = await this.sessionService.findOneDetailed(sessionId);
+      if (!session) return;
+
+      const message = await this.requestAiInsight(apiKey, session, payload);
+      if (!message) return;
+
+      this.aiBlockedUntilBySession.delete(sessionId);
+      await this.sessionService.addAiMessage(sessionId, message);
+      await this.publishCurrentAiInsights(deviceId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'unknown error';
+      if (this.isOpenAiRateLimitError(error)) {
+        this.aiBlockedUntilBySession.set(
+          sessionId,
+          Date.now() + this.aiRateLimitCooldownMs,
+        );
+        this.logger.warn(
+          `AI insight generation rate limited: ${message}. Retrying in ${Math.round(this.aiRateLimitCooldownMs / 60_000)} minutes.`,
+        );
+        return;
+      }
+      this.logger.warn(`AI insight generation failed: ${message}`);
+    } finally {
+      this.generatingAiBySession.delete(sessionId);
+    }
+  }
+
+  private isOpenAiRateLimitError(error: unknown): boolean {
+    if (!(error instanceof Error)) return false;
+    return error.message.includes('OpenAI 429');
+  }
+
+  private async requestAiInsight(
+    apiKey: string,
+    session: Session,
+    payload: TelemetryPayload,
+  ): Promise<string | null> {
+    const recentRecords = (session.records ?? []).slice(-6).map((record) => ({
+      recordedAt: record.recordedAt,
+      pulse: record.pulse,
+      oxygenSaturation: record.oxygenSaturation,
+      temperatureC: record.temperatureC,
+      systolic: record.systolic,
+      diastolic: record.diastolic,
+      warningActive: record.warningActive,
+      alertActive: record.alertActive,
+    }));
+
+    const symptoms = [
+      session.dizziness ? 'mareos' : null,
+      session.nausea ? 'nausea' : null,
+      session.cramps ? 'calambres' : null,
+      session.pain ? 'dolor' : null,
+      session.shortnessOfBreath ? 'falta de aire' : null,
+      session.weakness ? 'debilidad' : null,
+      session.chills ? 'escalofrios' : null,
+    ].filter(Boolean);
+
+    const prompt = {
+      patient: {
+        name: session.patient.user.fullname,
+        age: session.patient.age,
+        sex: session.patient.sex,
+        patientType: session.patient.patientType,
+        baseDisease: session.patient.baseDisease,
+        knownAllergies: session.patient.knownAllergies,
+        antecedentes: {
+          diabetes: session.patient.hasDiabetes,
+          hipertension: session.patient.hasHypertension,
+          enfermedadCardiaca: session.patient.hasHeartDisease,
+          anemia: session.patient.hasAnemia,
+          infeccionesPrevias: session.patient.hasPreviousInfections,
+        },
+      },
+      session: {
+        startedAt: session.startedAt,
+        weightBefore: session.weightBefore,
+        weightAfter: session.weightAfter,
+        dryWeight: session.dryWeight,
+        sessionDurationMinutes: session.sessionDurationMinutes,
+        reportedSymptoms: session.reportedSymptoms,
+        symptomFlags: symptoms,
+        staffObservations: session.staffObservations,
+      },
+      latestTelemetry: payload,
+      recentRecords,
+    };
+
+    const response = await globalThis.fetch(
+      'https://api.openai.com/v1/chat/completions',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          temperature: 0.2,
+          messages: [
+            {
+              role: 'system',
+              content:
+                'Eres un asistente clinico de apoyo para hemodialisis. Responde en espanol, en maximo 3 frases breves. Indica estado general del paciente y puntos a vigilar sin diagnosticos definitivos.',
+            },
+            {
+              role: 'user',
+              content: `Analiza esta sesion de hemodialisis y entrega un mensaje breve para mostrar en una tablet clinica: ${JSON.stringify(prompt)}`,
+            },
+          ],
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(`OpenAI ${response.status}`);
+    }
+
+    const data = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    return data.choices?.[0]?.message?.content?.trim() ?? null;
   }
 }

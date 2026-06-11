@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Activity, HeartPulse, RotateCcw, Thermometer } from "lucide-react";
-import { jsPDF } from "jspdf";
+import { toast } from "sonner";
 
 import { DashboardHeader } from "@/components/headerPage";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
+import { sessionService } from "./data/session.service";
 import { sessionStore } from "./data/session.store";
 import { SessionsTable } from "./components/session-table";
 import { SessionCharts } from "./components/session-charts"; // ojo: charts (no chars)
@@ -40,6 +41,12 @@ function buildCsvFromSessions(sessions: Session[]): string {
     "sessionEndedAt",
     "patientId",
     "patientFullname",
+    "weightBefore",
+    "weightAfter",
+    "dryWeight",
+    "sessionDurationMinutes",
+    "reportedSymptoms",
+    "staffObservations",
     "recordId",
     "recordedAt",
     "pulse",
@@ -58,6 +65,12 @@ function buildCsvFromSessions(sessions: Session[]): string {
         safeISO(s.endedAt ?? null),
         s.patient?.id ?? "",
         s.patient?.user?.fullname ?? "",
+        s.weightBefore ?? "",
+        s.weightAfter ?? "",
+        s.dryWeight ?? "",
+        s.sessionDurationMinutes ?? "",
+        s.reportedSymptoms ?? "",
+        s.staffObservations ?? "",
         r.id,
         safeISO(r.recordedAt),
         r.pulse,
@@ -90,6 +103,8 @@ export default function SessionPage() {
   const [dateTo, setDateTo] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
+  const [downloadingSessionId, setDownloadingSessionId] = useState<string | null>(null);
+  const [sendingSessionId, setSendingSessionId] = useState<string | null>(null);
 
   const filteredSessions = useMemo(() => {
     const text = search.trim().toLowerCase();
@@ -156,41 +171,39 @@ export default function SessionPage() {
     URL.revokeObjectURL(url);
   };
 
-  const handleExportPdf = () => {
-    const doc = new jsPDF();
-    let y = 12;
-    doc.setFontSize(14);
-    doc.text("Reporte clinico de sesiones", 10, y);
-    y += 8;
-    doc.setFontSize(10);
-    doc.text(`Sesiones filtradas: ${filteredSessions.length}`, 10, y);
-    y += 6;
-    doc.text(`Lecturas: ${clinicalSummary.recordsCount}`, 10, y);
-    y += 8;
+  const handleDownloadReport = async (sessionId: string) => {
+    setDownloadingSessionId(sessionId);
+    try {
+      const { blob, fileName } = await sessionService.downloadReport(sessionId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName ?? `reporte-sesion-${sessionId.slice(0, 8)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error("No se pudo generar el PDF de la sesion");
+    } finally {
+      setDownloadingSessionId(null);
+    }
+  };
 
-    filteredSessions.forEach((s) => {
-      if (y > 270) {
-        doc.addPage();
-        y = 12;
+  const handleSendReport = async (sessionId: string) => {
+    setSendingSessionId(sessionId);
+    try {
+      const response = await sessionService.sendReport(sessionId);
+      if (!response.ok) {
+        toast.error("No se pudo enviar el PDF por WhatsApp");
+        return;
       }
-      doc.setFontSize(10);
-      doc.text(
-        `Sesion ${s.id.slice(0, 8)} | ${s.patient?.user?.fullname ?? "Paciente"} | Inicio ${new Date(s.startedAt).toLocaleString("es-ES")}`,
-        10,
-        y,
-      );
-      y += 5;
-      const last = (s.records ?? []).at(-1);
-      doc.text(
-        `Ultimo: Pulso ${last?.pulse ?? "-"} | SpO2 ${last?.oxygenSaturation ?? "-"} | Temp ${last?.temperatureC ?? "-"} | PA ${last?.systolic ?? "-"}/${last?.diastolic ?? "-"}`,
-        12,
-        y,
-      );
-      y += 7;
-    });
-
-    const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
-    doc.save(`sesiones-filtradas-${ts}.pdf`);
+      toast.success("PDF enviado por WhatsApp");
+    } catch {
+      toast.error("No se pudo enviar el PDF por WhatsApp");
+    } finally {
+      setSendingSessionId(null);
+    }
   };
 
   useEffect(() => {
@@ -271,9 +284,6 @@ export default function SessionPage() {
             <Button variant="outline" onClick={handleExportCsv}>
               Descargar CSV
             </Button>
-            <Button variant="outline" onClick={handleExportPdf}>
-              Descargar PDF
-            </Button>
           </CardContent>
         </Card>
 
@@ -340,6 +350,10 @@ export default function SessionPage() {
                   page={page}
                   pageSize={pageSize}
                   onPageChange={setPage}
+                  onDownloadReport={handleDownloadReport}
+                  onSendReport={handleSendReport}
+                  downloadingSessionId={downloadingSessionId}
+                  sendingSessionId={sendingSessionId}
                 />
               </CardContent>
             </Card>

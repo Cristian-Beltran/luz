@@ -3,7 +3,19 @@ import type { Patient } from "../Patient/patient.interface";
 // --- DTOs de entrada ---
 export interface CreateSessionDto {
   patientId: string;
-  deviceId: string;
+  deviceId?: string;
+  weightBefore?: number;
+  weightAfter?: number;
+  dryWeight?: number;
+  reportedSymptoms?: string;
+  dizziness?: boolean;
+  nausea?: boolean;
+  cramps?: boolean;
+  pain?: boolean;
+  shortnessOfBreath?: boolean;
+  weakness?: boolean;
+  chills?: boolean;
+  staffObservations?: string;
 }
 
 export interface CreateSessionDataDto {
@@ -47,5 +59,24 @@ export interface Session {
   startedAt: string; // ISO
   endedAt?: string | null; // ISO | null
   deviceId: string;
+  weightBefore?: number | null;
+  weightAfter?: number | null;
+  dryWeight?: number | null;
+  sessionDurationMinutes?: number | null;
+  reportedSymptoms?: string | null;
+  dizziness?: boolean;
+  nausea?: boolean;
+  cramps?: boolean;
+  pain?: boolean;
+  shortnessOfBreath?: boolean;
+  weakness?: boolean;
+  chills?: boolean;
+  staffObservations?: string | null;
   records?: SessionData[];
+  aiMessages?: Array<{
+    id: string;
+    message: string;
+    source: string;
+    createdAt: string;
+  }>;
 }

@@ -8,10 +8,13 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Res,
+  StreamableFile,
   UseGuards,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { UserType } from 'src/app/users/enums/user-type';
 import { UserPayload } from 'src/context/shared/decorators/user.decorator';
 import { UserTypes } from 'src/context/shared/decorators/type-user.decorator';
@@ -21,12 +24,16 @@ import { PayloadToken } from 'src/context/shared/models/token.model';
 import { SessionService } from '../services/session.service';
 import { CreateSessionDto } from '../dtos/create-session.dto';
 import { CreateSessionDataDto } from '../dtos/create-session-data.dto';
+import { SessionReportService } from '../services/session-report.service';
 
 @Controller('sessions')
 @UseGuards(JwtAuthGuard)
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class SessionController {
-  constructor(private readonly sessionService: SessionService) {}
+  constructor(
+    private readonly sessionService: SessionService,
+    private readonly sessionReportService: SessionReportService,
+  ) {}
 
   // POST /sessions  -> crea una sesión
   @Post()
@@ -46,6 +53,20 @@ export class SessionController {
   @Patch(':id/close')
   closeSession(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
     return this.sessionService.closeSession(id);
+  }
+
+  @Get(':id/report')
+  async downloadReport(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const report = await this.sessionReportService.generateSessionReport(id);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${report.fileName}"`,
+    );
+    return new StreamableFile(report.buffer);
   }
 
   @Get()

@@ -56,7 +56,9 @@ export const userPatientStore = create<UserClinicStore>((set, get) => ({
 
       return (
         fullname?.toLowerCase().includes(normalized) ||
-        email?.toLowerCase().includes(normalized)
+        email?.toLowerCase().includes(normalized) ||
+        item.referenceName?.toLowerCase().includes(normalized) ||
+        item.referencePhone?.toLowerCase().includes(normalized)
       );
     });
     set({ filteredData: filtered });
