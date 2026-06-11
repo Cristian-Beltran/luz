@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import mqtt, { type MqttClient } from "mqtt";
 import {
   Activity,
+  Bot,
   Droplets,
   HeartPulse,
   Radio,
@@ -9,6 +10,7 @@ import {
   UserRound,
   Waves,
   Wifi,
+  X,
 } from "lucide-react";
 import {
   CartesianGrid,
@@ -41,6 +43,7 @@ const TELEMETRY_TOPIC = `luz/device/${DEVICE_ID}/telemetry`;
 const SESSION_TOPIC = `luz/device/${DEVICE_ID}/session`;
 const AI_TOPIC = `luz/device/${DEVICE_ID}/ai`;
 const DEVICE_TIMEOUT_MS = 12_000;
+const AI_MESSAGE_TTL_MS = 10_000;
 
 type LivePoint = {
   ts: string;
@@ -78,6 +81,7 @@ type AiMessage = {
   message: string;
   source: string;
   createdAt: string;
+  expiresAt: number;
 };
 
 function toNumber(value: unknown): number | undefined {
@@ -145,6 +149,7 @@ function toAiMessages(payload: Record<string, unknown>): AiMessage[] {
       message: String(entry.message ?? ""),
       source: String(entry.source ?? "openai"),
       createdAt: String(entry.createdAt ?? new Date().toISOString()),
+      expiresAt: Date.now() + AI_MESSAGE_TTL_MS,
     }];
   });
 }
@@ -239,7 +244,16 @@ export default function PublicMonitoringPage() {
           setSession(toSessionState(payload));
         }
         if (topic === AI_TOPIC) {
-          setAiMessages(toAiMessages(payload));
+          const incoming = toAiMessages(payload).filter((entry) => entry.message.trim());
+          setAiMessages((prev) => {
+            const merged = [
+              ...prev.filter((oldMessage) => !incoming.some((entry) => entry.id === oldMessage.id)),
+              ...incoming,
+            ];
+            return merged
+              .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+              .slice(-3);
+          });
         }
       } catch {
         return;
@@ -252,9 +266,17 @@ export default function PublicMonitoringPage() {
   }, []);
 
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    const timer = window.setInterval(() => {
+      const currentTime = Date.now();
+      setNow(currentTime);
+      setAiMessages((prev) => prev.filter((message) => message.expiresAt > currentTime));
+    }, 1000);
     return () => window.clearInterval(timer);
   }, []);
+
+  const dismissAiMessage = (id: string) => {
+    setAiMessages((prev) => prev.filter((message) => message.id !== id));
+  };
 
   const last = points.at(-1);
   const lastSeenTime = last ? new Date(last.ts).getTime() : 0;
@@ -427,27 +449,6 @@ export default function PublicMonitoringPage() {
                     Apagar
                   </Button>
                 </div>
-                <div className="rounded-lg border border-cyan-400/20 bg-cyan-400/5 px-3 py-2">
-                  <div className="mb-2 text-[10px] uppercase tracking-wide text-cyan-200">
-                    Comunicacion bidireccional
-                  </div>
-                  <div className="space-y-2">
-                    {aiMessages.length ? (
-                      aiMessages.slice().reverse().map((message) => (
-                        <div key={message.id} className="rounded-md border border-white/10 bg-black/20 px-2 py-2 text-[11px] leading-5 text-slate-200">
-                          <div className="mb-1 text-[10px] uppercase text-cyan-300">
-                            IA {formatTime(message.createdAt)}
-                          </div>
-                          {message.message}
-                        </div>
-                      ))
-                    ) : (
-                      <div className="text-[11px] text-slate-400">
-                        Esperando mensajes de analisis clinico.
-                      </div>
-                    )}
-                  </div>
-                </div>
               </CardContent>
             </Card>
           </aside>
@@ -532,6 +533,31 @@ export default function PublicMonitoringPage() {
             </div>
           </section>
         </section>
+      </div>
+
+      <div className="pointer-events-none fixed right-3 top-3 z-50 flex w-[min(360px,calc(100vw-1.5rem))] flex-col gap-2">
+        {aiMessages.slice().reverse().map((message) => (
+          <div
+            key={message.id}
+            className="pointer-events-auto animate-in fade-in slide-in-from-right-2 rounded-lg border border-cyan-300/30 bg-slate-950/95 p-3 text-slate-100 shadow-2xl backdrop-blur"
+          >
+            <div className="mb-1.5 flex items-center justify-between gap-3">
+              <div className="inline-flex min-w-0 items-center gap-2 text-[11px] uppercase tracking-wide text-cyan-200">
+                <Bot className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">IA {formatTime(message.createdAt)}</span>
+              </div>
+              <button
+                type="button"
+                className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-slate-300 hover:bg-white/10 hover:text-white"
+                onClick={() => dismissAiMessage(message.id)}
+                aria-label="Cerrar mensaje de IA"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="line-clamp-3 text-sm leading-5 text-slate-100">{message.message}</p>
+          </div>
+        ))}
       </div>
     </main>
   );

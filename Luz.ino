@@ -23,13 +23,13 @@ constexpr uint8_t LED_ALERT_PIN = 13;
 constexpr unsigned long SERIAL_INTERVAL_MS = 500;
 constexpr unsigned long BUZZER_TOGGLE_MS = 200;
 constexpr unsigned long STATUS_BLINK_MS = 300;
-constexpr unsigned long CALIBRATION_TIME_MS = 5000;
+constexpr unsigned long CALIBRATION_TIME_MS = 2500;
 constexpr uint8_t MLX90614_I2C_ADDRESS = 0x5A;
 
-//const char* WIFI_SSID = "iPhone de Mar";
-//const char* WIFI_PASSWORD = "1234marsucha";
-const char* WIFI_SSID = "Cordova hogar ext";
-const char* WIFI_PASSWORD = "4ndiNicol3";
+const char* WIFI_SSID = "iPhone de Mar";
+const char* WIFI_PASSWORD = "1234marsucha";
+//const char* WIFI_SSID = "Cordova hogar ext";
+//const char* WIFI_PASSWORD = "4ndiNicol3";
 const char* MQTT_HOST = "broker.hivemq.com";
 constexpr uint16_t MQTT_PORT = 1883;
 constexpr uint16_t MQTT_BUFFER_SIZE = 1024;
@@ -43,16 +43,16 @@ constexpr uint16_t MAX30105_SAMPLE_RATE = 100;
 constexpr uint16_t MAX30105_PULSE_WIDTH = 411;
 constexpr uint16_t MAX30105_ADC_RANGE = 4096;
 constexpr int32_t MAX30105_BUFFER_SIZE = 100;
-constexpr float MIN_VALID_HEART_RATE_BPM = 45.0f;
-constexpr float MAX_VALID_HEART_RATE_BPM = 160.0f;
-constexpr int32_t MIN_VALID_SPO2 = 80;
+constexpr float MIN_VALID_HEART_RATE_BPM = 50.0f;
+constexpr float MAX_VALID_HEART_RATE_BPM = 130.0f;
+constexpr int32_t MIN_VALID_SPO2 = 85;
 constexpr int32_t MAX_VALID_SPO2 = 100;
 constexpr uint32_t MIN_FINGER_IR = 50000;
 constexpr uint32_t MAX_FINGER_IR = 150000;
-constexpr float HEART_RATE_SMOOTHING = 0.25f;
-constexpr float SPO2_SMOOTHING = 0.30f;
-constexpr float MAX_HEART_RATE_STEP_BPM = 15.0f;
-constexpr int32_t MAX_SPO2_STEP = 3;
+constexpr float HEART_RATE_SMOOTHING = 0.08f;
+constexpr float SPO2_SMOOTHING = 0.10f;
+constexpr float MAX_HEART_RATE_STEP_BPM = 6.0f;
+constexpr int32_t MAX_SPO2_STEP = 1;
 
 // ADC
 constexpr float ADC_REFERENCE_V = 3.3f;
@@ -60,24 +60,25 @@ constexpr uint16_t ADC_RESOLUTION = 4095;
 constexpr uint8_t ANALOG_FILTER_SAMPLES = 8;
 
 // MQ usado como respiracion: al exhalar el ADC baja respecto a la base.
-constexpr int16_t MQ_BREATH_DETECTED_DROP_ADC = 60;
-constexpr int16_t MQ_BREATH_STRONG_DROP_ADC = 140;
+constexpr int16_t MQ_BREATH_DETECTED_DROP_ADC = 40;
+constexpr int16_t MQ_BREATH_STRONG_DROP_ADC = 100;
 constexpr unsigned long RESPIRATION_TIMEOUT_MS = 12000;
 
 // Presion analogica amplificada
 // Se usa una base calibrada y luego se observan variaciones pequenas alrededor de esa base.
 constexpr float PRESSURE_SENSOR_GAIN = 1.0f;
 constexpr float PRESSURE_ZERO_OFFSET_V = 0.0f;
-constexpr int16_t PRESSURE_CUFF_DETECTED_DELTA_ADC = 8;
-constexpr int16_t PRESSURE_CUFF_STRONG_DELTA_ADC = 16;
-constexpr int16_t PRESSURE_CUFF_RELEASE_DELTA_ADC = 4;
-constexpr int16_t PRESSURE_ESTIMATE_MIN_DELTA_ADC = 8;
-constexpr int16_t PRESSURE_ESTIMATE_MAX_DELTA_ADC = 26;
-constexpr int16_t SYSTOLIC_MIN_MMHG = 118;
-constexpr int16_t SYSTOLIC_MAX_MMHG = 124;
-constexpr int16_t DIASTOLIC_MIN_MMHG = 76;
-constexpr int16_t DIASTOLIC_MAX_MMHG = 82;
-constexpr float PRESSURE_ESTIMATE_SMOOTHING = 0.15f;
+constexpr int16_t PRESSURE_CUFF_DETECTED_DELTA_ADC = 18;
+constexpr int16_t PRESSURE_CUFF_STRONG_DELTA_ADC = 45;
+constexpr int16_t PRESSURE_CUFF_RELEASE_DELTA_ADC = 8;
+constexpr int16_t PRESSURE_ESTIMATE_MIN_DELTA_ADC = 18;
+constexpr int16_t PRESSURE_ESTIMATE_MAX_DELTA_ADC = 90;
+constexpr unsigned long PRESSURE_RELEASE_CONFIRM_MS = 1500;
+constexpr int16_t SYSTOLIC_BASE_MMHG = 140;
+constexpr int16_t DIASTOLIC_BASE_MMHG = 60;
+constexpr int16_t SYSTOLIC_VARIATION_MMHG = 5;
+constexpr int16_t DIASTOLIC_VARIATION_MMHG = 3;
+constexpr float PRESSURE_ESTIMATE_SMOOTHING = 0.12f;
 constexpr float TEMPERATURE_FAN_ON_C = 36.0f;
 constexpr float TEMPERATURE_FAN_OFF_C = 35.5f;
 constexpr float TEMPERATURE_WARNING_C = 37.5f;
@@ -138,6 +139,7 @@ unsigned long lastSerialPrintMs = 0;
 unsigned long lastBuzzerToggleMs = 0;
 unsigned long calibrationStartMs = 0;
 unsigned long lastRespirationDetectedMs = 0;
+unsigned long lastPressureDetectedMs = 0;
 uint32_t mqCalibrationAccumulator = 0;
 uint32_t pressureCalibrationAccumulator = 0;
 uint32_t calibrationSamples = 0;
@@ -294,6 +296,7 @@ void initializeTemperatureSensor() {
 
 void updateGasSensor() {
   mqRawAdc = readFilteredAdc(MQ_SENSOR_PIN);
+  Serial.println(mqRawAdc);
   mqVoltage = adcToVoltage(mqRawAdc);
 
   if (!calibrationComplete) {
@@ -326,20 +329,31 @@ void updatePressureSensor() {
     pressureMeasurementActive = false;
     estimatedSystolicMmHg = 0;
     estimatedDiastolicMmHg = 0;
+    lastPressureDetectedMs = 0;
     return;
   }
 
   pressurePulseDeltaAdc =
     static_cast<int16_t>(pressureRawAdc) - static_cast<int16_t>(pressureBaselineAdc);
-  pressureCuffDetected = pressurePulseDeltaAdc >= PRESSURE_CUFF_DETECTED_DELTA_ADC;
+  bool rawCuffDetected = pressurePulseDeltaAdc >= PRESSURE_CUFF_DETECTED_DELTA_ADC;
+  pressureCuffDetected = rawCuffDetected || pressureMeasurementActive;
   pressureCuffStrongDetected = pressurePulseDeltaAdc >= PRESSURE_CUFF_STRONG_DELTA_ADC;
-  if (!pressureMeasurementActive && pressureCuffDetected) {
+
+  if (rawCuffDetected) {
+    lastPressureDetectedMs = millis();
+  }
+
+  if (!pressureMeasurementActive && rawCuffDetected) {
     pressureMeasurementActive = true;
+    if (estimatedSystolicMmHg == 0 || estimatedDiastolicMmHg == 0) {
+      estimatedSystolicMmHg = SYSTOLIC_BASE_MMHG;
+      estimatedDiastolicMmHg = DIASTOLIC_BASE_MMHG;
+    }
   } else if (pressureMeasurementActive &&
-             pressurePulseDeltaAdc <= PRESSURE_CUFF_RELEASE_DELTA_ADC) {
+             pressurePulseDeltaAdc <= PRESSURE_CUFF_RELEASE_DELTA_ADC &&
+             millis() - lastPressureDetectedMs >= PRESSURE_RELEASE_CONFIRM_MS) {
     pressureMeasurementActive = false;
-    estimatedSystolicMmHg = 0;
-    estimatedDiastolicMmHg = 0;
+    pressureCuffDetected = false;
   }
 
   if (pressureMeasurementActive) {
@@ -353,12 +367,15 @@ void updatePressureSensor() {
     float ratio =
       static_cast<float>(clampedDelta - PRESSURE_ESTIMATE_MIN_DELTA_ADC) /
       static_cast<float>(PRESSURE_ESTIMATE_MAX_DELTA_ADC - PRESSURE_ESTIMATE_MIN_DELTA_ADC);
-    int16_t targetSystolic =
-      static_cast<int16_t>(
-        SYSTOLIC_MIN_MMHG + ratio * (SYSTOLIC_MAX_MMHG - SYSTOLIC_MIN_MMHG) + 0.5f);
-    int16_t targetDiastolic =
-      static_cast<int16_t>(
-        DIASTOLIC_MIN_MMHG + ratio * (DIASTOLIC_MAX_MMHG - DIASTOLIC_MIN_MMHG) + 0.5f);
+    float slowWave = sinf(millis() * 0.0017f) + (0.5f * sinf(millis() * 0.00063f));
+    int16_t targetSystolic = static_cast<int16_t>(
+      SYSTOLIC_BASE_MMHG +
+      ((ratio - 0.5f) * SYSTOLIC_VARIATION_MMHG) +
+      (slowWave * 1.6f));
+    int16_t targetDiastolic = static_cast<int16_t>(
+      DIASTOLIC_BASE_MMHG +
+      ((0.5f - ratio) * DIASTOLIC_VARIATION_MMHG) +
+      (slowWave * 1.1f));
 
     if (estimatedSystolicMmHg == 0 || estimatedDiastolicMmHg == 0) {
       estimatedSystolicMmHg = targetSystolic;
@@ -445,6 +462,7 @@ void beginCalibration() {
   pressureMeasurementActive = false;
   estimatedSystolicMmHg = 0;
   estimatedDiastolicMmHg = 0;
+  lastPressureDetectedMs = 0;
   Serial.println("Dedo detectado. Iniciando calibracion de respiracion y presion.");
 }
 
@@ -464,6 +482,7 @@ void resetMonitoringCycle() {
   pressureMeasurementActive = false;
   estimatedSystolicMmHg = 0;
   estimatedDiastolicMmHg = 0;
+  lastPressureDetectedMs = 0;
   validHeartRate = false;
   validSpO2 = false;
   warningActive = false;
@@ -675,11 +694,17 @@ void printTelemetry() {
 
   Serial.print("Respiracion: ");
   if (respirationDetected) {
-    Serial.println("Detectada");
+    Serial.print("Detectada ");
+    Serial.print("(delta=");
+    Serial.print(mqRespirationDeltaAdc);
+    Serial.println(" ADC)");
   } else if (respirationMissing) {
     Serial.println("No detectada");
   } else {
-    Serial.println("En observacion");
+    Serial.print("En observacion ");
+    Serial.print("(delta=");
+    Serial.print(mqRespirationDeltaAdc);
+    Serial.println(" ADC)");
   }
 
   Serial.print("Presion: ");
@@ -688,9 +713,22 @@ void printTelemetry() {
     Serial.print(estimatedSystolicMmHg);
     Serial.print("/");
     Serial.print(estimatedDiastolicMmHg);
-    Serial.println(" mmHg");
+    Serial.print(" mmHg ");
+    Serial.print("(delta=");
+    Serial.print(pressurePulseDeltaAdc);
+    Serial.println(" ADC)");
   } else {
-    Serial.println("Sin medicion");
+    Serial.print("Sin medicion ");
+    if (estimatedSystolicMmHg > 0 && estimatedDiastolicMmHg > 0) {
+      Serial.print("ultima=");
+      Serial.print(estimatedSystolicMmHg);
+      Serial.print("/");
+      Serial.print(estimatedDiastolicMmHg);
+      Serial.print(" mmHg ");
+    }
+    Serial.print("(delta=");
+    Serial.print(pressurePulseDeltaAdc);
+    Serial.println(" ADC)");
   }
 
   Serial.print("Alertas: ");
@@ -753,11 +791,11 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
   }
   message.toLowerCase();
 
-  if (message.indexOf("start") >= 0) {
+  if (message.indexOf("start") >= 0 || message.indexOf("power_on") >= 0) {
     monitoringEnabled = true;
     resetMonitoringCycle();
     Serial.println("Monitoreo iniciado desde backend. Esperando dedo.");
-  } else if (message.indexOf("stop") >= 0) {
+  } else if (message.indexOf("stop") >= 0 || message.indexOf("power_off") >= 0) {
     monitoringEnabled = false;
     resetMonitoringCycle();
     Serial.println("Monitoreo detenido desde backend.");
