@@ -47,8 +47,10 @@ export class MonitoringController {
       chills: dto.chills,
       staffObservations: dto.staffObservations,
     });
+    this.monitoringService.setDevicePower(DEVICE_ID, true);
     this.monitoringService.publishSessionState(DEVICE_ID, session);
     this.monitoringService.publishAiInsights(DEVICE_ID, []);
+    this.monitoringService.publishControl(DEVICE_ID, 'power_on');
     return session;
   }
 

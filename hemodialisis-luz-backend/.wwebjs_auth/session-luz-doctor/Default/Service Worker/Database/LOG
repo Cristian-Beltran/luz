@@ -1,3 +1,2 @@
-2026/06/11-05:58:15.922 6fc76 Reusing MANIFEST /home/cristian/software/Univalle-01-2026/Luz/hemodialisis-luz-backend/.wwebjs_auth/session-luz-doctor/Default/Service Worker/Database/MANIFEST-000001
-2026/06/11-05:58:15.925 6fc76 Recovering log #3
-2026/06/11-05:58:15.925 6fc76 Reusing old log /home/cristian/software/Univalle-01-2026/Luz/hemodialisis-luz-backend/.wwebjs_auth/session-luz-doctor/Default/Service Worker/Database/000003.log 
+2026/06/11-11:52:36.081 3ce43 Creating DB /home/cristian/software/Univalle-01-2026/Luz/hemodialisis-luz-backend/.wwebjs_auth/session-luz-doctor/Default/Service Worker/Database since it was missing.
+2026/06/11-11:52:36.093 3ce43 Reusing MANIFEST /home/cristian/software/Univalle-01-2026/Luz/hemodialisis-luz-backend/.wwebjs_auth/session-luz-doctor/Default/Service Worker/Database/MANIFEST-000001

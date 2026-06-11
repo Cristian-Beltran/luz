@@ -1,3 +1,2 @@
-2026/06/11-05:58:16.074 6fc6d Reusing MANIFEST /home/cristian/software/Univalle-01-2026/Luz/hemodialisis-luz-backend/.wwebjs_auth/session-luz-doctor/Default/shared_proto_db/metadata/MANIFEST-000001
-2026/06/11-05:58:16.074 6fc6d Recovering log #3
-2026/06/11-05:58:16.074 6fc6d Reusing old log /home/cristian/software/Univalle-01-2026/Luz/hemodialisis-luz-backend/.wwebjs_auth/session-luz-doctor/Default/shared_proto_db/metadata/000003.log 
+2026/06/11-11:52:33.698 3ce43 Creating DB /home/cristian/software/Univalle-01-2026/Luz/hemodialisis-luz-backend/.wwebjs_auth/session-luz-doctor/Default/shared_proto_db/metadata since it was missing.
+2026/06/11-11:52:33.709 3ce43 Reusing MANIFEST /home/cristian/software/Univalle-01-2026/Luz/hemodialisis-luz-backend/.wwebjs_auth/session-luz-doctor/Default/shared_proto_db/metadata/MANIFEST-000001
