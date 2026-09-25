@@ -51,8 +51,11 @@ export class SessionController {
   }
 
   @Patch(':id/close')
-  closeSession(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
-    return this.sessionService.closeSession(id);
+  closeSession(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() body: { weightAfter?: number },
+  ) {
+    return this.sessionService.closeSession(id, body.weightAfter);
   }
 
   @Get(':id/report')

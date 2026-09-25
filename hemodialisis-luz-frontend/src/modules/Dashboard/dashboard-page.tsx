@@ -5,7 +5,7 @@ import {
   AlertTriangle,
   CheckCircle,
   HeartPulse,
-  Droplets,
+  Waves,
   Thermometer,
   Gauge,
   RefreshCw,
@@ -193,13 +193,13 @@ export default function DashboardPage() {
 
   const todayCount = useMemo(() => countTodaySessions(sessions), [sessions]);
 
-  // Puedes calcularlo con reglas (SpO2<92, Temp≥38, SYS≥140 o DIA≥90, etc.)
+  // Conteo reservado para reglas clinicas configurables.
   const criticalCount = 0;
   const stableCount = Math.max(patientsCount - criticalCount, 0);
 
   // === Nuevas métricas del último registro ===
   const vPulse = num(latestRecord?.pulse);
-  const vSpo2 = num(latestRecord?.oxygenSaturation);
+  const vRespiratoryRate = num(latestRecord?.respiratoryRateBpm);
   const vTemp = pickVital(
     latestRecord as (SessionData & ExtVitals) | undefined,
     "temperatureC",
@@ -215,7 +215,7 @@ export default function DashboardPage() {
 
   // Rangos para barras (ajusta por clínica)
   const rPulse = { min: 40, max: 160 };
-  const rSpo2 = { min: 85, max: 100 };
+  const rRespiratoryRate = { min: 0, max: 40 };
   const rTemp = { min: 35, max: 40 };
   const toPctSys = (v: number) => pct(v, 80, 180);
 
@@ -339,7 +339,7 @@ export default function DashboardPage() {
           <CardContent className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               <VitalTile
-                title="Pulso"
+                title="FC"
                 value={vPulse}
                 unit="bpm"
                 icon={<HeartPulse className="h-4 w-4" />}
@@ -347,12 +347,12 @@ export default function DashboardPage() {
                 hint={`${rPulse.min}-${rPulse.max}`}
               />
               <VitalTile
-                title="SpO₂"
-                value={vSpo2}
-                unit="%"
-                icon={<Droplets className="h-4 w-4" />}
-                progress={pct(vSpo2, rSpo2.min, rSpo2.max)}
-                hint={`${rSpo2.min}-${rSpo2.max}`}
+                title="Frecuencia respiratoria"
+                value={vRespiratoryRate}
+                unit="rpm"
+                icon={<Waves className="h-4 w-4" />}
+                progress={pct(vRespiratoryRate, rRespiratoryRate.min, rRespiratoryRate.max)}
+                hint="Normal 12-20"
               />
               <VitalTile
                 title="Temperatura"
@@ -450,7 +450,7 @@ export default function DashboardPage() {
                 : (s.patient ?? "Paciente");
 
               const pulse = num(r?.pulse);
-              const spo2 = num(r?.oxygenSaturation);
+              const respiratoryRate = num(r?.respiratoryRateBpm);
               const temp = num(
                 (r as SessionData & { temperatureC?: number })?.temperatureC,
               );
@@ -484,7 +484,7 @@ export default function DashboardPage() {
                     <Separator />
                     <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3 xl:grid-cols-5">
                       <Chip label="BPM" value={pulse} />
-                      <Chip label="SpO₂" value={spo2} />
+                      <Chip label="FR" value={respiratoryRate} />
                       <Chip label="°C" value={temp} />
                       <Chip label="SYS" value={sys} />
                       <Chip label="DIA" value={dia} />

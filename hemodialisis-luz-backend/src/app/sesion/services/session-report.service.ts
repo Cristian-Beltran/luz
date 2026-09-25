@@ -32,8 +32,8 @@ export class SessionReportService {
       () => this.buildDocumentDefinition(session),
       {
         title: `Reporte clinico ${session.id}`,
-        subject: 'Sesion de hemodialisis',
-        author: 'Luz',
+        subject: 'Sesion del prototipo de monitor multiparametrico',
+        author: 'Prototipo de Monitor Multiparametrico',
         creationDate: new Date(),
       },
     );
@@ -67,8 +67,10 @@ export class SessionReportService {
     ].filter(Boolean);
 
     const pulse = this.metricStats(records.map((record) => record.pulse));
-    const spo2 = this.metricStats(records.map((record) => record.oxygenSaturation));
     const temp = this.metricStats(records.map((record) => record.temperatureC));
+    const respiratoryRate = this.metricStats(
+      records.map((record) => record.respiratoryRateBpm),
+    );
     const systolic = this.metricStats(records.map((record) => record.systolic));
     const diastolic = this.metricStats(records.map((record) => record.diastolic));
 
@@ -141,6 +143,28 @@ export class SessionReportService {
       },
       {
         columns: [
+          this.infoCard(
+            'Ultrafiltracion objetivo',
+            session.ultrafiltrationGoalLiters != null
+              ? `${session.ultrafiltrationGoalLiters} L`
+              : 'Sin dato',
+          ),
+          this.infoCard(
+            'Ultrafiltracion real',
+            session.ultrafiltrationActualLiters != null
+              ? `${session.ultrafiltrationActualLiters} L`
+              : 'Pendiente de cierre',
+          ),
+          this.infoCard(
+            'Intervalo de presion',
+            `${session.pressureIntervalMinutes ?? 30} min`,
+          ),
+        ],
+        columnGap: 10,
+        margin: [0, 8, 0, 0],
+      },
+      {
+        columns: [
           this.infoCard('Sintomas reportados', session.reportedSymptoms ?? 'Sin dato'),
           this.infoCard('Sintomas marcados', sintomas.join(', ') || 'Ninguno'),
           this.infoCard(
@@ -154,9 +178,9 @@ export class SessionReportService {
       { text: 'Resumen de metricas', style: 'section' },
       {
         columns: [
-          this.metricCard('Pulso', 'bpm', pulse),
-          this.metricCard('SpO2', '%', spo2),
+          this.metricCard('FC', 'bpm', pulse),
           this.metricCard('Temp', 'C', temp),
+          this.metricCard('FR', 'rpm', respiratoryRate),
           this.metricCard(
             'PA',
             'mmHg',
@@ -184,17 +208,17 @@ export class SessionReportService {
       { text: 'Graficas de la sesion', style: 'section', pageBreak: 'before' },
       {
         columns: [
-          this.chartBlock('Pulso (bpm)', this.buildLineChartSvg(records, {
+          this.chartBlock('Frecuencia cardiaca (bpm)', this.buildLineChartSvg(records, {
             color: '#2563eb',
             values: records.map((record) => record.pulse),
             labels: records.map((record) => record.recordedAt),
             unit: 'bpm',
           })),
-          this.chartBlock('SpO2 (%)', this.buildLineChartSvg(records, {
+          this.chartBlock('Frecuencia respiratoria (rpm)', this.buildLineChartSvg(records, {
             color: '#059669',
-            values: records.map((record) => record.oxygenSaturation),
+            values: records.map((record) => record.respiratoryRateBpm),
             labels: records.map((record) => record.recordedAt),
-            unit: '%',
+            unit: 'rpm',
           })),
         ],
         columnGap: 10,
@@ -214,6 +238,8 @@ export class SessionReportService {
       },
       { text: 'Lecturas registradas', style: 'section', margin: [0, 18, 0, 6] },
       this.recordsTable(records),
+      { text: 'Registro de eventos', style: 'section', margin: [0, 18, 0, 6] },
+      this.eventsTable(session),
     ];
 
     if (latest) {
@@ -343,7 +369,7 @@ export class SessionReportService {
             { text: 'Ultima lectura', style: 'cardTitle' },
             {
               text:
-                `Pulso ${record.pulse ?? '-'} bpm  |  SpO2 ${record.oxygenSaturation ?? '-'} %  |  Temp ${record.temperatureC ?? '-'} C  |  PA ${record.systolic ?? '-'}/${record.diastolic ?? '-'}`,
+                `FC ${record.pulse ?? '-'} bpm  |  FR ${record.respiratoryRateBpm ?? '-'} rpm  |  Temp ${record.temperatureC ?? '-'} C  |  PA ${record.systolic ?? '-'}/${record.diastolic ?? '-'}`,
               margin: [0, 4, 0, 0],
             },
           ],
@@ -370,8 +396,8 @@ export class SessionReportService {
     const body = [
       [
         'Hora',
-        'Pulso',
-        'SpO2',
+        'FC',
+        'FR',
         'Temp',
         'SYS',
         'DIA',
@@ -380,7 +406,7 @@ export class SessionReportService {
       ...records.map((record) => [
         this.formatTime(record.recordedAt),
         this.formatStat(record.pulse, 0),
-        this.formatStat(record.oxygenSaturation, 0),
+        this.formatStat(record.respiratoryRateBpm, 0),
         this.formatStat(record.temperatureC, 1),
         this.formatStat(record.systolic, 0),
         this.formatStat(record.diastolic, 0),
@@ -393,6 +419,29 @@ export class SessionReportService {
         headerRows: 1,
         widths: [70, 50, 50, 50, 45, 45, '*'],
         body,
+      },
+      layout: 'lightHorizontalLines',
+    };
+  }
+
+  private eventsTable(session: Session): any {
+    const events = session.events ?? [];
+    if (!events.length) {
+      return { text: 'Sin eventos registrados', color: '#64748b' };
+    }
+    return {
+      table: {
+        headerRows: 1,
+        widths: [70, 85, 75, '*'],
+        body: [
+          ['Hora', 'Evento', 'Origen', 'Detalle'],
+          ...events.map((event) => [
+            this.formatTime(event.createdAt),
+            event.type,
+            event.source,
+            event.description,
+          ]),
+        ],
       },
       layout: 'lightHorizontalLines',
     };

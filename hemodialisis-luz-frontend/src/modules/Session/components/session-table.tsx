@@ -41,7 +41,7 @@ function miniStats(records: SessionData[]) {
       .filter((x) => Number.isFinite(x)) as number[];
 
   const pulse = nums((r) => r.pulse);
-  const spo2 = nums((r) => r.oxygenSaturation);
+  const respiratoryRate = nums((r) => r.respiratoryRateBpm);
   const temp = nums((r) => r.temperatureC);
   const sys = nums((r) => r.systolic);
   const dia = nums((r) => r.diastolic);
@@ -53,7 +53,7 @@ function miniStats(records: SessionData[]) {
 
   return {
     pulse: { avg: avg(pulse), min: min(pulse), max: max(pulse) },
-    spo2: { avg: avg(spo2), min: min(spo2), max: max(spo2) },
+    respiratoryRate: { avg: avg(respiratoryRate), min: min(respiratoryRate), max: max(respiratoryRate) },
     temp: { avg: avg(temp), min: min(temp), max: max(temp) },
     systolic: { avg: avg(sys), min: min(sys), max: max(sys) },
     diastolic: { avg: avg(dia), min: min(dia), max: max(dia) },
@@ -218,6 +218,8 @@ export function SessionsTable({
 
                 <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                   <InfoBlock title="Peso antes / despues / seco" value={`${s.weightBefore ?? "-"} / ${s.weightAfter ?? "-"} / ${s.dryWeight ?? "-"}`} />
+                  <InfoBlock title="Ultrafiltracion objetivo / real" value={`${s.ultrafiltrationGoalLiters ?? "-"} / ${s.ultrafiltrationActualLiters ?? "-"} L`} />
+                  <InfoBlock title="Presion automatica" value={`Cada ${s.pressureIntervalMinutes ?? 30} min · ultima ${s.lastPressureAt ? fmtDate(s.lastPressureAt) : "sin toma"}`} />
                   <InfoBlock title="Duracion" value={`${s.sessionDurationMinutes ?? "-"} min`} />
                   <InfoBlock title="Sintomas reportados" value={s.reportedSymptoms ?? "Sin dato"} />
                   <InfoBlock title="Sintomas marcados" value={[
@@ -235,18 +237,18 @@ export function SessionsTable({
                 {/* Mini KPIs de la sesión */}
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                   <MetricCompact
-                    title="Pulso (bpm)"
+                    title="FC (bpm)"
                     avg={st.pulse.avg}
                     min={st.pulse.min}
                     max={st.pulse.max}
                     now={safe(last?.pulse)}
                   />
                   <MetricCompact
-                    title="SpO₂ (%)"
-                    avg={st.spo2.avg}
-                    min={st.spo2.min}
-                    max={st.spo2.max}
-                    now={safe(last?.oxygenSaturation)}
+                    title="Frecuencia respiratoria (rpm)"
+                    avg={st.respiratoryRate.avg}
+                    min={st.respiratoryRate.min}
+                    max={st.respiratoryRate.max}
+                    now={safe(last?.respiratoryRateBpm)}
                   />
                   <MetricCompact
                     title="Temp (°C)"
@@ -281,7 +283,7 @@ export function SessionsTable({
                     </CardHeader>
                     <CardContent className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3 xl:grid-cols-5">
                       <Chip label="BPM" value={safe(last?.pulse)} />
-                      <Chip label="SpO₂" value={safe(last?.oxygenSaturation)} />
+                      <Chip label="FR" value={safe(last?.respiratoryRateBpm)} />
                       <Chip label="°C" value={safe(last?.temperatureC)} />
                       <Chip label="SYS" value={safe(last?.systolic)} />
                       <Chip label="DIA" value={safe(last?.diastolic)} />
@@ -316,7 +318,7 @@ export function SessionsTable({
                         </CardHeader>
                         <CardContent className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3 xl:grid-cols-5">
                           <Chip label="BPM" value={safe(r.pulse)} />
-                          <Chip label="SpO₂" value={safe(r.oxygenSaturation)} />
+                          <Chip label="FR" value={safe(r.respiratoryRateBpm)} />
                           <Chip label="°C" value={safe(r.temperatureC)} />
                           <Chip label="SYS" value={safe(r.systolic)} />
                           <Chip label="DIA" value={safe(r.diastolic)} />
@@ -342,6 +344,21 @@ export function SessionsTable({
                   >
                     {sendingSessionId === s.id ? "Enviando..." : "Enviar por WhatsApp"}
                   </Button>
+                </div>
+
+                <div className="mt-4 rounded-xl border border-muted/70 p-3">
+                  <div className="mb-2 text-sm font-medium">Eventos de la sesion</div>
+                  {(s.events ?? []).length ? (
+                    <div className="max-h-48 space-y-1 overflow-auto">
+                      {(s.events ?? []).map((event) => (
+                        <div key={event.id} className="grid gap-1 rounded-md bg-muted/30 px-2 py-1.5 text-xs sm:grid-cols-[120px_90px_1fr]">
+                          <span>{fmtDate(event.createdAt)}</span>
+                          <Badge variant="outline" className="w-fit">{event.source}</Badge>
+                          <span>{event.description}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : <div className="text-xs text-muted-foreground">Sin eventos registrados</div>}
                 </div>
               </AccordionContent>
             </AccordionItem>

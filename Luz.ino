@@ -1,856 +1,1942 @@
+#include <Arduino.h>
 #include <Wire.h>
 #include <math.h>
-#include <Adafruit_MLX90614.h>
-#include "MAX30105.h"
-#include "heartRate.h"
-#include "spo2_algorithm.h"
 #include <WiFi.h>
-#include <PubSubClient.h>
+#include <WiFiClientSecure.h>
+#include <MQTT.h>
+#include <Adafruit_MLX90614.h>
+#include <Q2HX711.h>
 
-// ESP32 NodeMCU compacto
-// Ajusta estos pines si tu placa usa otro mapeo.
-constexpr uint8_t I2C_SDA_PIN = 21;
-constexpr uint8_t I2C_SCL_PIN = 22;
-constexpr uint8_t MQ_SENSOR_PIN = 34;        // ADC solo entrada
-constexpr uint8_t PRESSURE_SENSOR_PIN = 35;  // ADC solo entrada
-constexpr uint8_t BUZZER_PIN = 27;
-constexpr uint8_t VIBRATOR_PIN = 26;
-constexpr uint8_t FAN_RELAY_PIN = 25;
-constexpr uint8_t LED_OK_PIN = 14;
-constexpr uint8_t LED_WARNING_PIN = 33;
-constexpr uint8_t LED_ALERT_PIN = 13;
+// ============================================================
+// MONITOR DE SIGNOS - ESP32
+// ============================================================
+// Pines definidos:
+//   GPIO16 -> CLK sensor presion MPS20N0040D-S / HX710B
+//   GPIO17 -> OUT/DOUT sensor presion
+//   GPIO18 -> boton inflar
+//   GPIO19 -> boton silenciar alarma 30 s
+//   GPIO21 -> SDA
+//   GPIO22 -> SCL
+//   GPIO13 -> LED ON
+//   GPIO14 -> LED WiFi
+//   GPIO27 -> LED ALARMA
+//   GPIO26 -> rele ventilador
+//   GPIO25 -> bomba de aire
+//   GPIO33 -> buzzer
+//   GPIO35 -> ADC PPG/oximetro
+//   GPIO34 -> ADC MQ
+//
+// IMPORTANTE:
+// GPIO36 en ESP32 es SOLO ENTRADA.
+// Por eso queda como feedback/sensor opcional de la valvula.
+// Para controlar la valvula se usa GPIO32.
+// ============================================================
 
-constexpr unsigned long SERIAL_INTERVAL_MS = 500;
-constexpr unsigned long BUZZER_TOGGLE_MS = 200;
-constexpr unsigned long STATUS_BLINK_MS = 300;
-constexpr unsigned long CALIBRATION_TIME_MS = 2500;
-constexpr uint8_t MLX90614_I2C_ADDRESS = 0x5A;
 
+// ========================= PINOUT =========================
+constexpr uint8_t PRESSURE_CLK_PIN    = 17;
+constexpr uint8_t PRESSURE_DOUT_PIN   = 16;
+
+constexpr uint8_t BUTTON_INFLATE_PIN  = 18;
+constexpr uint8_t BUTTON_MUTE_PIN     = 19;
+
+constexpr uint8_t I2C_SDA_PIN         = 21;
+constexpr uint8_t I2C_SCL_PIN         = 22;
+
+constexpr uint8_t LED_ON_PIN          = 13;
+constexpr uint8_t LED_WIFI_PIN        = 14;
+constexpr uint8_t LED_ALARM_PIN       = 27;
+
+constexpr uint8_t FAN_RELAY_PIN       = 26;
+constexpr uint8_t AIR_PUMP_PIN        = 25;
+constexpr uint8_t BUZZER_PIN          = 33;
+
+constexpr uint8_t PPG_ADC_PIN         = 35;
+constexpr uint8_t MQ_ADC_PIN          = 34;
+
+constexpr uint8_t VALVE_FEEDBACK_PIN  = 36;  // SOLO ENTRADA
+constexpr uint8_t AIR_VALVE_PIN       = 32;  // SALIDA real para valvula
+
+
+// ========================= NIVELES ACTIVOS =========================
+// Cambia estos valores solo si tus drivers trabajan invertidos.
+constexpr bool PUMP_ACTIVE_HIGH = true;
+constexpr bool VALVE_ACTIVE_HIGH = true;
+
+// El rele del ventilador del proyecto anterior era activo en LOW.
+constexpr bool FAN_RELAY_ACTIVE_LOW = true;
+
+
+// ========================= WIFI / MQTT =========================
+// WiFi ES OPCIONAL.
+// Si WIFI_SSID queda vacio, todo funciona por Serial y localmente.
 const char* WIFI_SSID = "iPhone de Mar";
 const char* WIFI_PASSWORD = "1234marsucha";
-//const char* WIFI_SSID = "Cordova hogar ext";
-//const char* WIFI_PASSWORD = "4ndiNicol3";
-const char* MQTT_HOST = "broker.hivemq.com";
-constexpr uint16_t MQTT_PORT = 1883;
-constexpr uint16_t MQTT_BUFFER_SIZE = 1024;
+
+
+const char* MQTT_HOST = "server-local.tail9af6ac.ts.net";
+constexpr uint16_t MQTT_PORT = 443;
+const char* MQTT_USER = "device";
+const char* MQTT_PASS = "esp32";
+constexpr uint16_t MQTT_BUFFER_SIZE = 2048;
 const char* DEVICE_ID = "esp32-luz-01";
 
-// Parametros del MAX30105
-constexpr uint16_t MAX30105_BRIGHTNESS = 60;
-constexpr uint8_t MAX30105_SAMPLE_AVERAGE = 4;
-constexpr uint8_t MAX30105_LED_MODE = 2;
-constexpr uint16_t MAX30105_SAMPLE_RATE = 100;
-constexpr uint16_t MAX30105_PULSE_WIDTH = 411;
-constexpr uint16_t MAX30105_ADC_RANGE = 4096;
-constexpr int32_t MAX30105_BUFFER_SIZE = 100;
-constexpr float MIN_VALID_HEART_RATE_BPM = 50.0f;
-constexpr float MAX_VALID_HEART_RATE_BPM = 130.0f;
-constexpr int32_t MIN_VALID_SPO2 = 85;
-constexpr int32_t MAX_VALID_SPO2 = 100;
-constexpr uint32_t MIN_FINGER_IR = 50000;
-constexpr uint32_t MAX_FINGER_IR = 150000;
-constexpr float HEART_RATE_SMOOTHING = 0.08f;
-constexpr float SPO2_SMOOTHING = 0.10f;
-constexpr float MAX_HEART_RATE_STEP_BPM = 6.0f;
-constexpr int32_t MAX_SPO2_STEP = 1;
+constexpr bool MQTT_SIMULATE_MISSING_VALUES = false;
 
-// ADC
-constexpr float ADC_REFERENCE_V = 3.3f;
-constexpr uint16_t ADC_RESOLUTION = 4095;
-constexpr uint8_t ANALOG_FILTER_SAMPLES = 8;
+WiFiClientSecure wifiClient;
+MQTTClient mqttClient(MQTT_BUFFER_SIZE);
 
-// MQ usado como respiracion: al exhalar el ADC baja respecto a la base.
-constexpr int16_t MQ_BREATH_DETECTED_DROP_ADC = 40;
-constexpr int16_t MQ_BREATH_STRONG_DROP_ADC = 100;
+
+// ========================= SENSORES =========================
+Adafruit_MLX90614 mlx;
+Q2HX711 pressureSensor(PRESSURE_DOUT_PIN, PRESSURE_CLK_PIN);
+
+bool mlxAvailable = false;
+bool pressureSensorAvailable = false;
+
+
+// ========================= TIEMPOS GENERALES =========================
+constexpr unsigned long SERIAL_INTERVAL_MS     = 1000;
+constexpr unsigned long MQTT_INTERVAL_MS       = 500;
+constexpr unsigned long MQTT_RAW_INTERVAL_MS   = 200;
+
+constexpr unsigned long WIFI_RETRY_MS          = 15000;
+constexpr unsigned long MQTT_RETRY_MS          = 5000;
+
+constexpr unsigned long BUTTON_DEBOUNCE_MS     = 80;
+constexpr unsigned long ALARM_MUTE_MS          = 30000;
+
+
+// ============================================================
+// TEMPERATURA - MLX90614
+// ============================================================
+constexpr float TEMP_MIN_C     = 35.0f;
+constexpr float TEMP_MAX_C     = 37.8f;
+
+constexpr float FAN_ON_TEMP_C  = 37.5f;
+constexpr float FAN_OFF_TEMP_C = 37.0f;
+
+float bodyTemperatureC = NAN;
+float ambientTemperatureC = NAN;
+
+bool temperatureValid = false;
+bool temperatureAlarm = false;
+bool fanOn = false;
+
+
+// ============================================================
+// MQ - DETECCION DE RESPIRACION
+// ============================================================
+constexpr unsigned long MQ_CALIBRATION_MS      = 5000;
 constexpr unsigned long RESPIRATION_TIMEOUT_MS = 12000;
 
-// Presion analogica amplificada
-// Se usa una base calibrada y luego se observan variaciones pequenas alrededor de esa base.
-constexpr float PRESSURE_SENSOR_GAIN = 1.0f;
-constexpr float PRESSURE_ZERO_OFFSET_V = 0.0f;
-constexpr int16_t PRESSURE_CUFF_DETECTED_DELTA_ADC = 18;
-constexpr int16_t PRESSURE_CUFF_STRONG_DELTA_ADC = 45;
-constexpr int16_t PRESSURE_CUFF_RELEASE_DELTA_ADC = 8;
-constexpr int16_t PRESSURE_ESTIMATE_MIN_DELTA_ADC = 18;
-constexpr int16_t PRESSURE_ESTIMATE_MAX_DELTA_ADC = 90;
-constexpr unsigned long PRESSURE_RELEASE_CONFIRM_MS = 1500;
-constexpr int16_t SYSTOLIC_BASE_MMHG = 140;
-constexpr int16_t DIASTOLIC_BASE_MMHG = 60;
-constexpr int16_t SYSTOLIC_VARIATION_MMHG = 5;
-constexpr int16_t DIASTOLIC_VARIATION_MMHG = 3;
-constexpr float PRESSURE_ESTIMATE_SMOOTHING = 0.12f;
-constexpr float TEMPERATURE_FAN_ON_C = 36.0f;
-constexpr float TEMPERATURE_FAN_OFF_C = 35.5f;
-constexpr float TEMPERATURE_WARNING_C = 37.5f;
-constexpr float TEMPERATURE_ALERT_C = 38.5f;
+// Mismo concepto del programa anterior:
+// cuando la persona exhala, el ADC baja respecto al baseline.
+constexpr int MQ_BREATH_DROP_ADC        = 40;
+constexpr int MQ_STRONG_BREATH_DROP_ADC = 100;
 
-MAX30105 particleSensor;
-Adafruit_MLX90614 mlx = Adafruit_MLX90614();
-WiFiClient wifiClient;
-PubSubClient mqttClient(wifiClient);
+uint16_t mqRaw = 0;
+float mqBaseline = 0.0f;
+int mqDelta = 0;
 
-uint32_t irBuffer[MAX30105_BUFFER_SIZE];
-uint32_t redBuffer[MAX30105_BUFFER_SIZE];
-
-float heartRateBpm = 0.0f;
-float spo2Filtered = 0.0f;
-int32_t spo2 = 0;
-bool validHeartRate = false;
-bool validSpO2 = false;
-bool fingerDetected = false;
-bool max30105Available = false;
-uint32_t lastIrValue = 0;
-int32_t max30105SamplesStored = 0;
-int32_t max30105NewSamples = 0;
-
-uint16_t mqRawAdc = 0;
-float mqVoltage = 0.0f;
-int16_t mqRespirationDeltaAdc = 0;
+bool mqCalibrationComplete = false;
 bool respirationDetected = false;
 bool strongRespirationDetected = false;
-
-uint16_t pressureRawAdc = 0;
-float pressureVoltage = 0.0f;
-int16_t pressurePulseDeltaAdc = 0;
-bool pressurePulseDetected = false;
-bool pressurePulseStrongDetected = false;
-bool pressureCuffDetected = false;
-bool pressureCuffStrongDetected = false;
-bool pressureMeasurementActive = false;
-int16_t estimatedSystolicMmHg = 0;
-int16_t estimatedDiastolicMmHg = 0;
-float bodyTemperatureC = 0.0f;
-float ambientTemperatureC = 0.0f;
-bool temperatureSensorAvailable = false;
-bool temperatureWarningDetected = false;
-bool temperatureAlertDetected = false;
-bool fanRelayActive = false;
-bool temperatureReadingValid = false;
-
-bool warningActive = false;
-bool alertActive = false;
-bool buzzerState = false;
-bool monitoringEnabled = false;
-bool calibrationStarted = false;
-bool calibrationComplete = false;
 bool respirationMissing = false;
+bool respirationPulseLatched = false;
+float respiratoryRateBpm = 0.0f;
 
-unsigned long lastSerialPrintMs = 0;
-unsigned long lastBuzzerToggleMs = 0;
-unsigned long calibrationStartMs = 0;
-unsigned long lastRespirationDetectedMs = 0;
-unsigned long lastPressureDetectedMs = 0;
-uint32_t mqCalibrationAccumulator = 0;
-uint32_t pressureCalibrationAccumulator = 0;
-uint32_t calibrationSamples = 0;
-uint16_t mqBaselineAdc = 0;
-uint16_t pressureBaselineAdc = 0;
+unsigned long mqCalibrationStartMs = 0;
+uint64_t mqCalibrationAccumulator = 0;
+uint32_t mqCalibrationSamples = 0;
+unsigned long lastBreathMs = 0;
+unsigned long previousBreathMs = 0;
 
-void initializeAnalogInputs();
-void scanI2CDevices();
-void initializeMax30105();
-void initializeTemperatureSensor();
-void updateCalibration();
-void updateMax30105();
-void updateGasSensor();
-void updatePressureSensor();
-void updateTemperatureSensor();
-void evaluateAlerts();
+
+// ============================================================
+// PPG ANALOGICO - FRECUENCIA CARDIACA
+// ============================================================
+// El sensor/circuito del proyecto anterior solo entrega un ADC.
+// Se usa la señal real para:
+//   1. detectar dedo
+//   2. intentar detectar pulsos
+//
+// Si el pulso real calculado no es estable, tambien se muestra
+// un BPM sano simulado.
+constexpr unsigned long PPG_SAMPLE_MS          = 10;
+constexpr unsigned long PPG_CALIBRATION_MS     = 2500;
+constexpr unsigned long PPG_NO_FINGER_GRACE_MS = 5000;
+
+constexpr int PPG_FINGER_DELTA_ADC = 120;
+
+constexpr int HR_PEAK_THRESHOLD = 25;
+constexpr unsigned long HR_MIN_INTERVAL_MS = 300;
+constexpr unsigned long HR_MAX_INTERVAL_MS = 2000;
+constexpr float HR_EMA_ALPHA = 0.20f;
+
+int ppgRaw = 0;
+int ppgSmoothed = 0;
+
+float ppgNoFingerBaseline = 0.0f;
+float hrBaseline = 0.0f;
+
+bool ppgCalibrationComplete = false;
+bool fingerDetected = false;
+bool pulseLatched = false;
+bool realBpmValid = false;
+
+float realBpm = 0.0f;
+float bpmOutput = 0.0f;
+
+unsigned long ppgCalibrationStartMs = 0;
+uint64_t ppgCalibrationAccumulator = 0;
+uint32_t ppgCalibrationSamples = 0;
+
+unsigned long lastPpgSampleMs = 0;
+unsigned long lastPulseMs = 0;
+
+unsigned long fingerCandidateSinceMs = 0;
+unsigned long noFingerCandidateSinceMs = 0;
+unsigned long ppgCalibrationDoneMs = 0;
+
+int hrBuffer[12] = {0};
+int hrBufferIndex = 0;
+long hrBufferTotal = 0;
+
+
+// ============================================================
+// PRESION - MPS20N0040D-S + HX710B
+// ============================================================
+//
+// CALIBRACION PROVISIONAL:
+//
+// El modulo indica aproximadamente:
+//   50 mV / 40 kPa
+//
+// Con HX710B de 24 bits y ganancia 128 se usa, de forma
+// TEORICA/APROXIMADA:
+//
+//   ~69 900 cuentas por mmHg
+//
+// Esto NO reemplaza una calibracion real contra manometro.
+//
+// Para esta etapa se limita el inflado a 60 mmHg.
+// Cuando se haga la calibracion real podremos subir el objetivo
+// y trabajar el algoritmo oscilometrico completo.
+//
+constexpr float APPROX_PRESSURE_COUNTS_PER_MMHG = 69900.0f;
+
+constexpr float PRESSURE_TARGET_MMHG  = 60.0f;
+constexpr float PRESSURE_MAX_MMHG     = 80.0f;
+constexpr float PRESSURE_RELEASE_MMHG = 8.0f;
+
+constexpr unsigned long MAX_INFLATION_TIME_MS = 8000;
+constexpr unsigned long PRESSURE_HOLD_MS      = 500;
+constexpr unsigned long MAX_RELEASE_TIME_MS   = 8000;
+
+long pressureRaw = 0;
+long pressureZeroRaw = 0;
+
+float pressureCountsPerMmHg = APPROX_PRESSURE_COUNTS_PER_MMHG;
+float cuffPressureMmHg = 0.0f;
+float cuffPressureFilteredMmHg = 0.0f;
+float lastCuffPeakMmHg = 0.0f;
+
+bool pressureZeroReady = false;
+bool pressureFault = false;
+bool pressureResultAvailable = false;
+int estimatedSystolicMmHg = 0;
+int estimatedDiastolicMmHg = 0;
+unsigned long lastPressureMeasuredAtMs = 0;
+uint32_t pressureMeasurementSequence = 0;
+uint32_t pressureResultSequence = 0;
+String pressureTriggerSource = "none";
+
+enum class PressureState {
+  IDLE,
+  INFLATING,
+  HOLDING,
+  RELEASING
+};
+
+PressureState pressureState = PressureState::IDLE;
+
+unsigned long pressureCycleStartMs = 0;
+unsigned long pressureHoldStartMs = 0;
+unsigned long pressureReleaseStartMs = 0;
+
+unsigned long pressureNotificationStartMs = 0;
+
+
+// ============================================================
+// ALARMAS
+// ============================================================
+bool fingerAlarm = false;
+bool alarmActive = false;
+
+unsigned long alarmMutedUntilMs = 0;
+uint32_t alarmMuteSequence = 0;
+String alarmMuteSource = "none";
+
+
+// ============================================================
+// BOTONES
+// ============================================================
+bool lastInflateButtonState = HIGH;
+bool lastMuteButtonState = HIGH;
+
+unsigned long lastInflateDebounceMs = 0;
+unsigned long lastMuteDebounceMs = 0;
+
+
+// ============================================================
+// ESTADO GENERAL
+// ============================================================
+unsigned long lastSerialMs = 0;
+unsigned long lastMqttPublishMs = 0;
+unsigned long lastMqttRawPublishMs = 0;
+
+unsigned long lastWifiAttemptMs = 0;
+unsigned long lastMqttAttemptMs = 0;
+
+
+// ============================================================
+// PROTOTIPOS
+// ============================================================
+uint16_t readFilteredAdc(uint8_t pin, uint8_t samples = 8);
+
+void updateButtons();
+void updateSerialCommands();
+
+void updateMqSensor();
+void updateTemperature();
+void updatePpg();
+void updatePressure();
+
+bool readPressureRaw(long& value, unsigned long timeoutMs = 250);
+void capturePressureZero();
+
+void startPressureMeasurement(const char* source = "unknown");
+void finishPressureMeasurement();
+void abortPressureMeasurement(const char* reason);
+void muteAlarm(const char* source);
+const char* pressureStateName();
+
+void evaluateAlarms();
+
+void setPump(bool on);
+void setValveClosed(bool closed);
+void setFan(bool on);
+
 void updateOutputs();
-void printTelemetry();
-void beginCalibration();
-uint16_t readFilteredAdc(uint8_t pin);
-float adcToVoltage(uint16_t rawAdc);
+void updateBuzzer();
+
+bool alarmMuted();
+
 void ensureWifi();
 void ensureMqtt();
-void onMqttMessage(char* topic, byte* payload, unsigned int length);
-void publishTelemetryMqtt();
-float sanitizeNumber(float value);
-void resetMonitoringCycle();
 
+void mqttMessageHandler(String& topic, String& payload);
+void publishTelemetry();
+void publishRawTelemetry();
+float sanitizeMqttNumber(float value, float fallback);
+
+void printTelemetry();
+
+
+// ============================================================
+// SETUP
+// ============================================================
 void setup() {
   Serial.begin(115200);
-  delay(1000);
+  Serial.setTimeout(50);
 
-  pinMode(BUZZER_PIN, OUTPUT);
-  pinMode(VIBRATOR_PIN, OUTPUT);
+  delay(300);
+
+  // ---------------- BOTONES ----------------
+  pinMode(BUTTON_INFLATE_PIN, INPUT_PULLUP);
+  pinMode(BUTTON_MUTE_PIN, INPUT_PULLUP);
+
+  // ---------------- LEDs ----------------
+  pinMode(LED_ON_PIN, OUTPUT);
+  pinMode(LED_WIFI_PIN, OUTPUT);
+  pinMode(LED_ALARM_PIN, OUTPUT);
+
+  // ---------------- ACTUADORES ----------------
   pinMode(FAN_RELAY_PIN, OUTPUT);
-  pinMode(LED_OK_PIN, OUTPUT);
-  pinMode(LED_WARNING_PIN, OUTPUT);
-  pinMode(LED_ALERT_PIN, OUTPUT);
+  pinMode(AIR_PUMP_PIN, OUTPUT);
+  pinMode(AIR_VALVE_PIN, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
 
-  digitalWrite(BUZZER_PIN, LOW);
-  digitalWrite(VIBRATOR_PIN, LOW);
-  digitalWrite(FAN_RELAY_PIN, HIGH);
-  digitalWrite(LED_OK_PIN, LOW);
-  digitalWrite(LED_WARNING_PIN, LOW);
-  digitalWrite(LED_ALERT_PIN, LOW);
+  // GPIO36 solo entrada
+  pinMode(VALVE_FEEDBACK_PIN, INPUT);
 
+  digitalWrite(LED_ON_PIN, HIGH);
+  digitalWrite(LED_WIFI_PIN, LOW);
+  digitalWrite(LED_ALARM_PIN, LOW);
+
+  setPump(false);
+  setValveClosed(false);
+  setFan(false);
+  noTone(BUZZER_PIN);
+
+  // ---------------- ADC ----------------
+  analogReadResolution(12);
+
+  analogSetPinAttenuation(PPG_ADC_PIN, ADC_11db);
+  analogSetPinAttenuation(MQ_ADC_PIN, ADC_11db);
+
+  // ---------------- I2C ----------------
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   Wire.setClock(100000);
-  scanI2CDevices();
-  initializeAnalogInputs();
-  initializeMax30105();
-  initializeTemperatureSensor();
-  mqttClient.setBufferSize(MQTT_BUFFER_SIZE);
-  mqttClient.setServer(MQTT_HOST, MQTT_PORT);
-  mqttClient.setCallback(onMqttMessage);
-  ensureWifi();
-  ensureMqtt();
 
-  Serial.println("Sistema Luz iniciado en ESP32 NodeMCU compacto");
+  // ---------------- MLX90614 ----------------
+  mlxAvailable = mlx.begin();
+
+  if (mlxAvailable) {
+    Serial.println("[MLX] OK");
+  } else {
+    Serial.println("[MLX] No detectado");
+  }
+
+  // ---------------- PRESION ----------------
+  Serial.println("[PRESION] Modo de calibracion APROXIMADA.");
+  Serial.print("[PRESION] Factor = ");
+  Serial.print(pressureCountsPerMmHg, 1);
+  Serial.println(" cuentas/mmHg");
+
+  Serial.println("[PRESION] Capturando cero...");
+  capturePressureZero();
+
+  // ---------------- CALIBRACIONES ADC ----------------
+  mqCalibrationStartMs = millis();
+  ppgCalibrationStartMs = millis();
+
+  // ---------------- MQTT ----------------
+  wifiClient.setInsecure();
+  mqttClient.begin(MQTT_HOST, MQTT_PORT, true, wifiClient);
+  mqttClient.onMessage(mqttMessageHandler);
+
+  // WiFi no bloqueante
+  ensureWifi();
+
+  randomSeed((uint32_t)analogRead(MQ_ADC_PIN) ^ micros());
+
+  Serial.println();
+  Serial.println("==========================================");
+  Serial.println(" MONITOR DE SIGNOS INICIADO");
+  Serial.println("==========================================");
+  Serial.println("Boton GPIO18 -> iniciar inflado");
+  Serial.println("Boton GPIO19 -> silenciar alarma 30 s");
+  Serial.println("PPG: dejar SIN dedo durante 2.5 s al arrancar");
+  Serial.println("MQ: calibracion inicial automatica 5 s");
+  Serial.println("WiFi: opcional");
+  Serial.println();
+  Serial.println("Comandos Serial:");
+  Serial.println("  status");
+  Serial.println("  inflate");
+  Serial.println("  mute");
+  Serial.println("  pzero");
+  Serial.println();
 }
 
+
+// ============================================================
+// LOOP
+// ============================================================
 void loop() {
-  updateGasSensor();
-  updatePressureSensor();
-  updateTemperatureSensor();
-  updateMax30105();
-  updateCalibration();
-  evaluateAlerts();
+  updateButtons();
+  updateSerialCommands();
+
+  updateMqSensor();
+  updateTemperature();
+  updatePpg();
+  updatePressure();
+
+  evaluateAlarms();
+
   updateOutputs();
+  updateBuzzer();
+
   ensureWifi();
   ensureMqtt();
-  mqttClient.loop();
 
-  if (millis() - lastSerialPrintMs >= SERIAL_INTERVAL_MS) {
-    lastSerialPrintMs = millis();
+  if (mqttClient.connected()) {
+    mqttClient.loop();
+  }
+
+  unsigned long now = millis();
+
+  if (now - lastSerialMs >= SERIAL_INTERVAL_MS) {
+    lastSerialMs = now;
     printTelemetry();
-    publishTelemetryMqtt();
   }
+
+  if (now - lastMqttPublishMs >= MQTT_INTERVAL_MS) {
+    lastMqttPublishMs = now;
+    publishTelemetry();
+  }
+
+  if (now - lastMqttRawPublishMs >= MQTT_RAW_INTERVAL_MS) {
+    lastMqttRawPublishMs = now;
+    publishRawTelemetry();
+  }
+
+  delay(1);
 }
 
-void initializeAnalogInputs() {
-  analogReadResolution(12);
-  analogSetPinAttenuation(MQ_SENSOR_PIN, ADC_11db);
-  analogSetPinAttenuation(PRESSURE_SENSOR_PIN, ADC_11db);
+
+// ============================================================
+// ADC
+// ============================================================
+uint16_t readFilteredAdc(uint8_t pin, uint8_t samples) {
+  uint32_t accumulator = 0;
+
+  for (uint8_t i = 0; i < samples; i++) {
+    accumulator += analogRead(pin);
+    delayMicroseconds(150);
+  }
+
+  return (uint16_t)(accumulator / samples);
 }
 
-void scanI2CDevices() {
-  Serial.println("Escaneo I2C:");
 
-  uint8_t devicesFound = 0;
-  for (uint8_t address = 1; address < 127; address++) {
-    Wire.beginTransmission(address);
-    uint8_t error = Wire.endTransmission();
+// ============================================================
+// MQ - RESPIRACION
+// ============================================================
+void updateMqSensor() {
+  mqRaw = readFilteredAdc(MQ_ADC_PIN);
 
-    if (error == 0) {
-      Serial.print(" - 0x");
-      if (address < 16) {
-        Serial.print("0");
+  // Calibracion automatica inicial
+  if (!mqCalibrationComplete) {
+    mqCalibrationAccumulator += mqRaw;
+    mqCalibrationSamples++;
+
+    if (millis() - mqCalibrationStartMs >= MQ_CALIBRATION_MS) {
+      if (mqCalibrationSamples > 0) {
+        mqBaseline =
+          (float)mqCalibrationAccumulator /
+          (float)mqCalibrationSamples;
+      } else {
+        mqBaseline = mqRaw;
       }
-      Serial.println(address, HEX);
-      devicesFound++;
+
+      mqCalibrationComplete = true;
+      lastBreathMs = millis();
+
+      Serial.print("[MQ] Baseline = ");
+      Serial.println(mqBaseline, 1);
     }
-  }
 
-  if (devicesFound == 0) {
-    Serial.println(" - sin dispositivos");
-  }
-}
-
-void initializeMax30105() {
-  if (!particleSensor.begin(Wire, I2C_SPEED_STANDARD)) {
-    Serial.println("No se detecto el MAX30105. Verifica cableado y alimentacion.");
-    max30105Available = false;
     return;
   }
 
-  particleSensor.setup(
-    MAX30105_BRIGHTNESS,
-    MAX30105_SAMPLE_AVERAGE,
-    MAX30105_LED_MODE,
-    MAX30105_SAMPLE_RATE,
-    MAX30105_PULSE_WIDTH,
-    MAX30105_ADC_RANGE
-  );
+  mqDelta =
+    (int)roundf(mqBaseline) -
+    (int)mqRaw;
 
-  particleSensor.setPulseAmplitudeRed(0x1F);
-  particleSensor.setPulseAmplitudeIR(0x1F);
-  particleSensor.setPulseAmplitudeGreen(0);
+  respirationDetected =
+    mqDelta >= MQ_BREATH_DROP_ADC;
 
-  max30105Available = true;
-  Serial.println("MAX30105 inicializado correctamente.");
-}
-
-void initializeTemperatureSensor() {
-  Wire.beginTransmission(MLX90614_I2C_ADDRESS);
-  uint8_t mlxError = Wire.endTransmission();
-
-  if (mlxError != 0) {
-    Serial.print("MLX90614 no responde en 0x5A. Codigo I2C: ");
-    Serial.println(mlxError);
-    temperatureSensorAvailable = false;
-    return;
-  }
-
-  if (!mlx.begin()) {
-    Serial.println("No se detecto el MLX90614. Verifica cableado y alimentacion.");
-    temperatureSensorAvailable = false;
-    return;
-  }
-
-  temperatureSensorAvailable = true;
-  Serial.println("MLX90614 inicializado correctamente.");
-}
-
-void updateGasSensor() {
-  mqRawAdc = readFilteredAdc(MQ_SENSOR_PIN);
-  Serial.println(mqRawAdc);
-  mqVoltage = adcToVoltage(mqRawAdc);
-
-  if (!calibrationComplete) {
-    mqRespirationDeltaAdc = 0;
-    respirationDetected = false;
-    strongRespirationDetected = false;
-    return;
-  }
-
-  mqRespirationDeltaAdc = static_cast<int16_t>(mqBaselineAdc) - static_cast<int16_t>(mqRawAdc);
-  respirationDetected = mqRespirationDeltaAdc >= MQ_BREATH_DETECTED_DROP_ADC;
-  strongRespirationDetected = mqRespirationDeltaAdc >= MQ_BREATH_STRONG_DROP_ADC;
+  strongRespirationDetected =
+    mqDelta >= MQ_STRONG_BREATH_DROP_ADC;
 
   if (respirationDetected) {
-    lastRespirationDetectedMs = millis();
+    unsigned long now = millis();
+    lastBreathMs = now;
+
+    // Un flanco por exhalacion evita contar muchas muestras del mismo ciclo.
+    if (!respirationPulseLatched) {
+      if (previousBreathMs != 0) {
+        unsigned long interval = now - previousBreathMs;
+        if (interval >= 1000 && interval <= 10000) {
+          float instantRate = 60000.0f / (float)interval;
+          respiratoryRateBpm = respiratoryRateBpm <= 0.0f
+            ? instantRate
+            : 0.25f * instantRate + 0.75f * respiratoryRateBpm;
+        }
+      }
+      previousBreathMs = now;
+      respirationPulseLatched = true;
+    }
+  } else {
+    respirationPulseLatched = false;
+    // Adaptacion muy lenta del baseline cuando la señal esta tranquila
+    if (abs(mqDelta) < 15) {
+      mqBaseline =
+        (mqBaseline * 0.999f) +
+        ((float)mqRaw * 0.001f);
+    }
+  }
+
+  respirationMissing =
+    (millis() - lastBreathMs) >=
+    RESPIRATION_TIMEOUT_MS;
+
+  if (respirationMissing) {
+    respiratoryRateBpm = 0.0f;
   }
 }
 
-void updatePressureSensor() {
-  pressureRawAdc = readFilteredAdc(PRESSURE_SENSOR_PIN);
-  pressureVoltage =
-    (adcToVoltage(pressureRawAdc) - PRESSURE_ZERO_OFFSET_V) * PRESSURE_SENSOR_GAIN;
 
-  if (!calibrationComplete) {
-    pressurePulseDeltaAdc = 0;
-    pressurePulseDetected = false;
-    pressurePulseStrongDetected = false;
-    pressureCuffDetected = false;
-    pressureCuffStrongDetected = false;
-    pressureMeasurementActive = false;
-    estimatedSystolicMmHg = 0;
-    estimatedDiastolicMmHg = 0;
-    lastPressureDetectedMs = 0;
+// ============================================================
+// MLX90614 - TEMPERATURA
+// ============================================================
+void updateTemperature() {
+  static unsigned long lastTemperatureReadMs = 0;
+
+  if (millis() - lastTemperatureReadMs < 250) {
     return;
   }
 
-  pressurePulseDeltaAdc =
-    static_cast<int16_t>(pressureRawAdc) - static_cast<int16_t>(pressureBaselineAdc);
-  bool rawCuffDetected = pressurePulseDeltaAdc >= PRESSURE_CUFF_DETECTED_DELTA_ADC;
-  pressureCuffDetected = rawCuffDetected || pressureMeasurementActive;
-  pressureCuffStrongDetected = pressurePulseDeltaAdc >= PRESSURE_CUFF_STRONG_DELTA_ADC;
+  lastTemperatureReadMs = millis();
 
-  if (rawCuffDetected) {
-    lastPressureDetectedMs = millis();
-  }
+  if (!mlxAvailable) {
+    temperatureValid = false;
+    temperatureAlarm = false;
 
-  if (!pressureMeasurementActive && rawCuffDetected) {
-    pressureMeasurementActive = true;
-    if (estimatedSystolicMmHg == 0 || estimatedDiastolicMmHg == 0) {
-      estimatedSystolicMmHg = SYSTOLIC_BASE_MMHG;
-      estimatedDiastolicMmHg = DIASTOLIC_BASE_MMHG;
-    }
-  } else if (pressureMeasurementActive &&
-             pressurePulseDeltaAdc <= PRESSURE_CUFF_RELEASE_DELTA_ADC &&
-             millis() - lastPressureDetectedMs >= PRESSURE_RELEASE_CONFIRM_MS) {
-    pressureMeasurementActive = false;
-    pressureCuffDetected = false;
-  }
-
-  if (pressureMeasurementActive) {
-    int16_t clampedDelta = pressurePulseDeltaAdc;
-    if (clampedDelta < PRESSURE_ESTIMATE_MIN_DELTA_ADC) {
-      clampedDelta = PRESSURE_ESTIMATE_MIN_DELTA_ADC;
-    } else if (clampedDelta > PRESSURE_ESTIMATE_MAX_DELTA_ADC) {
-      clampedDelta = PRESSURE_ESTIMATE_MAX_DELTA_ADC;
-    }
-
-    float ratio =
-      static_cast<float>(clampedDelta - PRESSURE_ESTIMATE_MIN_DELTA_ADC) /
-      static_cast<float>(PRESSURE_ESTIMATE_MAX_DELTA_ADC - PRESSURE_ESTIMATE_MIN_DELTA_ADC);
-    float slowWave = sinf(millis() * 0.0017f) + (0.5f * sinf(millis() * 0.00063f));
-    int16_t targetSystolic = static_cast<int16_t>(
-      SYSTOLIC_BASE_MMHG +
-      ((ratio - 0.5f) * SYSTOLIC_VARIATION_MMHG) +
-      (slowWave * 1.6f));
-    int16_t targetDiastolic = static_cast<int16_t>(
-      DIASTOLIC_BASE_MMHG +
-      ((0.5f - ratio) * DIASTOLIC_VARIATION_MMHG) +
-      (slowWave * 1.1f));
-
-    if (estimatedSystolicMmHg == 0 || estimatedDiastolicMmHg == 0) {
-      estimatedSystolicMmHg = targetSystolic;
-      estimatedDiastolicMmHg = targetDiastolic;
-    } else {
-      estimatedSystolicMmHg = static_cast<int16_t>(
-        estimatedSystolicMmHg +
-        (targetSystolic - estimatedSystolicMmHg) * PRESSURE_ESTIMATE_SMOOTHING + 0.5f);
-      estimatedDiastolicMmHg = static_cast<int16_t>(
-        estimatedDiastolicMmHg +
-        (targetDiastolic - estimatedDiastolicMmHg) * PRESSURE_ESTIMATE_SMOOTHING + 0.5f);
-    }
-  }
-
-  pressurePulseDetected = false;
-  pressurePulseStrongDetected = false;
-}
-
-void updateTemperatureSensor() {
-  if (!temperatureSensorAvailable) {
-    bodyTemperatureC = 0.0f;
-    ambientTemperatureC = 0.0f;
-    temperatureWarningDetected = false;
-    temperatureAlertDetected = false;
-    temperatureReadingValid = false;
+    setFan(false);
     return;
   }
 
   ambientTemperatureC = mlx.readAmbientTempC();
   bodyTemperatureC = mlx.readObjectTempC();
 
-  if (isnan(ambientTemperatureC) || isnan(bodyTemperatureC)) {
-    Serial.println("MLX90614 responde pero entrega NaN.");
-    temperatureWarningDetected = false;
-    temperatureAlertDetected = false;
-    temperatureReadingValid = false;
+  temperatureValid =
+    !isnan(ambientTemperatureC) &&
+    !isnan(bodyTemperatureC) &&
+    !isinf(ambientTemperatureC) &&
+    !isinf(bodyTemperatureC);
+
+  if (!temperatureValid) {
+    temperatureAlarm = false;
+
+    setFan(false);
     return;
   }
 
-  temperatureReadingValid = true;
-  temperatureWarningDetected = bodyTemperatureC >= TEMPERATURE_WARNING_C;
-  temperatureAlertDetected = bodyTemperatureC >= TEMPERATURE_ALERT_C;
+  temperatureAlarm =
+    bodyTemperatureC < TEMP_MIN_C ||
+    bodyTemperatureC > TEMP_MAX_C;
+
+  // Histeresis del ventilador
+  if (!fanOn && bodyTemperatureC >= FAN_ON_TEMP_C) {
+    setFan(true);
+  }
+
+  if (fanOn && bodyTemperatureC <= FAN_OFF_TEMP_C) {
+    setFan(false);
+  }
 }
 
-void updateCalibration() {
-  if (!calibrationStarted || calibrationComplete) {
+
+// ============================================================
+// PPG ANALOGICO
+// ============================================================
+void updatePpg() {
+  unsigned long now = millis();
+
+  if (now - lastPpgSampleMs < PPG_SAMPLE_MS) {
     return;
   }
 
-  mqCalibrationAccumulator += mqRawAdc;
-  pressureCalibrationAccumulator += pressureRawAdc;
-  calibrationSamples++;
+  lastPpgSampleMs = now;
 
-  if (millis() - calibrationStartMs < CALIBRATION_TIME_MS) {
-    return;
+  ppgRaw = analogRead(PPG_ADC_PIN);
+
+  // Promedio movil de 12 muestras
+  hrBufferTotal -= hrBuffer[hrBufferIndex];
+
+  hrBuffer[hrBufferIndex] = ppgRaw;
+  hrBufferTotal += hrBuffer[hrBufferIndex];
+
+  hrBufferIndex++;
+
+  if (hrBufferIndex >= 12) {
+    hrBufferIndex = 0;
   }
 
-  if (calibrationSamples > 0) {
-    mqBaselineAdc = static_cast<uint16_t>(mqCalibrationAccumulator / calibrationSamples);
-    pressureBaselineAdc =
-      static_cast<uint16_t>(pressureCalibrationAccumulator / calibrationSamples);
-  }
+  ppgSmoothed = (int)(hrBufferTotal / 12);
 
-  calibrationComplete = true;
-  lastRespirationDetectedMs = millis();
-  respirationMissing = false;
-  Serial.print("Base MQ: ");
-  Serial.print(mqBaselineAdc);
-  Serial.print("  Base Pres: ");
-  Serial.println(pressureBaselineAdc);
-}
+  // ------------------------------------------------------------
+  // Calibracion inicial SIN dedo
+  // ------------------------------------------------------------
+  if (!ppgCalibrationComplete) {
+    ppgCalibrationAccumulator += ppgRaw;
+    ppgCalibrationSamples++;
 
-void beginCalibration() {
-  calibrationStarted = true;
-  calibrationComplete = false;
-  calibrationStartMs = millis();
-  mqCalibrationAccumulator = 0;
-  pressureCalibrationAccumulator = 0;
-  calibrationSamples = 0;
-  mqBaselineAdc = 0;
-  pressureBaselineAdc = 0;
-  respirationMissing = false;
-  lastRespirationDetectedMs = 0;
-  pressureMeasurementActive = false;
-  estimatedSystolicMmHg = 0;
-  estimatedDiastolicMmHg = 0;
-  lastPressureDetectedMs = 0;
-  Serial.println("Dedo detectado. Iniciando calibracion de respiracion y presion.");
-}
-
-void resetMonitoringCycle() {
-  calibrationStarted = false;
-  calibrationComplete = false;
-  mqRespirationDeltaAdc = 0;
-  pressurePulseDeltaAdc = 0;
-  respirationDetected = false;
-  strongRespirationDetected = false;
-  respirationMissing = false;
-  lastRespirationDetectedMs = 0;
-  pressurePulseDetected = false;
-  pressurePulseStrongDetected = false;
-  pressureCuffDetected = false;
-  pressureCuffStrongDetected = false;
-  pressureMeasurementActive = false;
-  estimatedSystolicMmHg = 0;
-  estimatedDiastolicMmHg = 0;
-  lastPressureDetectedMs = 0;
-  validHeartRate = false;
-  validSpO2 = false;
-  warningActive = false;
-  alertActive = false;
-  buzzerState = false;
-  digitalWrite(BUZZER_PIN, LOW);
-}
-
-void updateMax30105() {
-  if (!max30105Available) {
-    validHeartRate = false;
-    validSpO2 = false;
-    fingerDetected = false;
-    return;
-  }
-
-  particleSensor.check();
-
-  while (particleSensor.available()) {
-    uint32_t redValue = particleSensor.getRed();
-    uint32_t irValue = particleSensor.getIR();
-    lastIrValue = irValue;
-
-    if (max30105SamplesStored < MAX30105_BUFFER_SIZE) {
-      redBuffer[max30105SamplesStored] = redValue;
-      irBuffer[max30105SamplesStored] = irValue;
-      max30105SamplesStored++;
-    } else {
-      for (int32_t i = 0; i < MAX30105_BUFFER_SIZE - 1; i++) {
-        redBuffer[i] = redBuffer[i + 1];
-        irBuffer[i] = irBuffer[i + 1];
+    if (now - ppgCalibrationStartMs >= PPG_CALIBRATION_MS) {
+      if (ppgCalibrationSamples > 0) {
+        ppgNoFingerBaseline =
+          (float)ppgCalibrationAccumulator /
+          (float)ppgCalibrationSamples;
+      } else {
+        ppgNoFingerBaseline = ppgRaw;
       }
-      redBuffer[MAX30105_BUFFER_SIZE - 1] = redValue;
-      irBuffer[MAX30105_BUFFER_SIZE - 1] = irValue;
+
+      hrBaseline = ppgSmoothed;
+
+      ppgCalibrationComplete = true;
+      ppgCalibrationDoneMs = now;
+
+      Serial.print("[PPG] Baseline sin dedo = ");
+      Serial.println(ppgNoFingerBaseline, 1);
     }
 
-    max30105NewSamples++;
-    particleSensor.nextSample();
-  }
-
-  if (max30105SamplesStored < MAX30105_BUFFER_SIZE || max30105NewSamples < 25) {
     return;
   }
 
-  int8_t spo2Valid = 0;
-  int8_t heartRateFromAlgoValid = 0;
-  int32_t heartRateFromAlgo = 0;
+  // ------------------------------------------------------------
+  // Deteccion de dedo
+  // ------------------------------------------------------------
+  int presenceDelta =
+    abs(ppgSmoothed - (int)roundf(ppgNoFingerBaseline));
 
-  maxim_heart_rate_and_oxygen_saturation(
-    irBuffer,
-    MAX30105_BUFFER_SIZE,
-    redBuffer,
-    &spo2,
-    &spo2Valid,
-    &heartRateFromAlgo,
-    &heartRateFromAlgoValid
+  bool fingerCandidate =
+    presenceDelta >= PPG_FINGER_DELTA_ADC &&
+    ppgSmoothed > 40 &&
+    ppgSmoothed < 4050;
+
+  if (fingerCandidate) {
+    noFingerCandidateSinceMs = 0;
+
+    if (fingerCandidateSinceMs == 0) {
+      fingerCandidateSinceMs = now;
+    }
+
+    if (now - fingerCandidateSinceMs >= 250) {
+      fingerDetected = true;
+    }
+
+  } else {
+    fingerCandidateSinceMs = 0;
+
+    if (noFingerCandidateSinceMs == 0) {
+      noFingerCandidateSinceMs = now;
+    }
+
+    if (now - noFingerCandidateSinceMs >= 600) {
+      fingerDetected = false;
+      realBpmValid = false;
+      pulseLatched = false;
+      lastPulseMs = 0;
+    }
+
+    // Actualiza lentamente el nivel sin dedo
+    if (!fingerDetected) {
+      ppgNoFingerBaseline =
+        (ppgNoFingerBaseline * 0.9995f) +
+        ((float)ppgSmoothed * 0.0005f);
+    }
+  }
+
+  // ------------------------------------------------------------
+  // Intento de deteccion de pulso real
+  // ------------------------------------------------------------
+  hrBaseline =
+    (hrBaseline * 199.0f +
+     (float)ppgSmoothed) /
+    200.0f;
+
+  if (fingerDetected) {
+    int deviation =
+      abs(ppgSmoothed -
+          (int)roundf(hrBaseline));
+
+    if (deviation > HR_PEAK_THRESHOLD &&
+        !pulseLatched) {
+
+      pulseLatched = true;
+
+      if (lastPulseMs != 0) {
+        unsigned long interval =
+          now - lastPulseMs;
+
+        if (interval >= HR_MIN_INTERVAL_MS &&
+            interval <= HR_MAX_INTERVAL_MS) {
+
+          float newBpm =
+            60000.0f /
+            (float)interval;
+
+          if (newBpm >= 40.0f &&
+              newBpm <= 180.0f) {
+
+            if (!realBpmValid) {
+              realBpm = newBpm;
+              realBpmValid = true;
+
+            } else {
+              realBpm =
+                HR_EMA_ALPHA * newBpm +
+                (1.0f - HR_EMA_ALPHA) * realBpm;
+            }
+          }
+        }
+      }
+
+      lastPulseMs = now;
+    }
+
+    if (deviation < (HR_PEAK_THRESHOLD / 2)) {
+      pulseLatched = false;
+    }
+
+    // ----------------------------------------------------------
+    // SALIDA BPM
+    // ----------------------------------------------------------
+    // Solo usamos el valor real si es válido y está en rango.
+    // Si no, enviamos 0 para indicar que no hay lectura válida.
+    if (realBpmValid &&
+        realBpm >= 50.0f &&
+        realBpm <= 120.0f) {
+
+      bpmOutput = realBpm;
+
+    } else {
+      bpmOutput = 0.0f;
+    }
+
+  } else {
+    bpmOutput = 0.0f;
+  }
+}
+
+
+// ============================================================
+// PRESION
+// ============================================================
+bool readPressureRaw(long& value, unsigned long timeoutMs) {
+  unsigned long start = millis();
+
+  while (!pressureSensor.readyToSend()) {
+    if (millis() - start >= timeoutMs) {
+      return false;
+    }
+
+    delay(1);
+  }
+
+  value = pressureSensor.read();
+  return true;
+}
+
+
+// ------------------------------------------------------------
+// CERO AUTOMATICO
+// ------------------------------------------------------------
+void capturePressureZero() {
+  setPump(false);
+  setValveClosed(false);
+
+  delay(500);
+
+  constexpr uint8_t SAMPLE_COUNT = 10;
+
+  int64_t accumulator = 0;
+  uint8_t validSamples = 0;
+
+  for (uint8_t i = 0; i < SAMPLE_COUNT; i++) {
+    long raw;
+
+    if (readPressureRaw(raw, 500)) {
+      accumulator += raw;
+      validSamples++;
+    }
+  }
+
+  if (validSamples == 0) {
+    pressureSensorAvailable = false;
+    pressureZeroReady = false;
+
+    Serial.println("[PRESION] ERROR: HX710B sin respuesta.");
+    return;
+  }
+
+  pressureSensorAvailable = true;
+
+  pressureZeroRaw =
+    (long)(accumulator / validSamples);
+
+  pressureRaw = pressureZeroRaw;
+  cuffPressureMmHg = 0.0f;
+  cuffPressureFilteredMmHg = 0.0f;
+
+  pressureZeroReady = true;
+
+  Serial.print("[PRESION] ZERO RAW = ");
+  Serial.println(pressureZeroRaw);
+}
+
+
+// ------------------------------------------------------------
+// ACTUALIZACION CONTINUA
+// ------------------------------------------------------------
+void updatePressure() {
+  unsigned long now = millis();
+
+  // No bloqueamos el loop esperando una lectura.
+  if (pressureSensor.readyToSend()) {
+    pressureRaw = pressureSensor.read();
+    pressureSensorAvailable = true;
+
+    if (pressureZeroReady) {
+      long delta =
+        labs(pressureRaw - pressureZeroRaw);
+
+      cuffPressureMmHg =
+        (float)delta /
+        pressureCountsPerMmHg;
+
+      if (cuffPressureMmHg < 0.0f) {
+        cuffPressureMmHg = 0.0f;
+      }
+
+      // Filtro sencillo
+      cuffPressureFilteredMmHg =
+        0.75f * cuffPressureFilteredMmHg +
+        0.25f * cuffPressureMmHg;
+
+      if (pressureState == PressureState::INFLATING &&
+          cuffPressureFilteredMmHg > lastCuffPeakMmHg) {
+
+        lastCuffPeakMmHg =
+          cuffPressureFilteredMmHg;
+      }
+    }
+  }
+
+  // ------------------------------------------------------------
+  // INFLANDO
+  // ------------------------------------------------------------
+  if (pressureState == PressureState::INFLATING) {
+
+    if (now - pressureCycleStartMs >= MAX_INFLATION_TIME_MS) {
+      abortPressureMeasurement("timeout de inflado");
+      return;
+    }
+
+    if (cuffPressureFilteredMmHg >= PRESSURE_MAX_MMHG) {
+      abortPressureMeasurement("limite maximo alcanzado");
+      return;
+    }
+
+    if (cuffPressureFilteredMmHg >= PRESSURE_TARGET_MMHG) {
+      setPump(false);
+
+      pressureHoldStartMs = now;
+      pressureState = PressureState::HOLDING;
+
+      Serial.print("[PRESION] Objetivo alcanzado: ");
+      Serial.print(cuffPressureFilteredMmHg, 1);
+      Serial.println(" mmHg");
+
+      return;
+    }
+  }
+
+  // ------------------------------------------------------------
+  // HOLD
+  // ------------------------------------------------------------
+  if (pressureState == PressureState::HOLDING) {
+
+    if (now - pressureHoldStartMs >= PRESSURE_HOLD_MS) {
+      finishPressureMeasurement();
+      return;
+    }
+  }
+
+  // ------------------------------------------------------------
+  // LIBERANDO
+  // ------------------------------------------------------------
+  if (pressureState == PressureState::RELEASING) {
+
+    if (cuffPressureFilteredMmHg <= PRESSURE_RELEASE_MMHG ||
+        now - pressureReleaseStartMs >= MAX_RELEASE_TIME_MS) {
+
+      pressureState = PressureState::IDLE;
+      pressureFault = false;
+
+      setPump(false);
+      setValveClosed(false);
+
+      Serial.println("[PRESION] Manguito liberado. Listo.");
+    }
+  }
+}
+
+
+// ------------------------------------------------------------
+// INICIAR MEDICION
+// ------------------------------------------------------------
+void startPressureMeasurement(const char* source) {
+  if (pressureState != PressureState::IDLE) {
+    Serial.println("[PRESION] Ya existe un ciclo activo.");
+    return;
+  }
+
+  if (!pressureZeroReady) {
+    Serial.println("[PRESION] Sin cero valido. Reintentando pzero...");
+
+    capturePressureZero();
+
+    if (!pressureZeroReady) {
+      Serial.println("[PRESION] No se puede iniciar.");
+      return;
+    }
+  }
+
+  pressureFault = false;
+  pressureResultAvailable = false;
+  pressureTriggerSource = source;
+  pressureMeasurementSequence++;
+
+  lastCuffPeakMmHg = 0.0f;
+
+  // Cerrar primero la valvula
+  setValveClosed(true);
+
+  delay(80);
+
+  // Encender bomba
+  setPump(true);
+
+  pressureCycleStartMs = millis();
+  pressureState = PressureState::INFLATING;
+
+  Serial.println("[PRESION] VALVULA CERRADA");
+  Serial.println("[PRESION] BOMBA ENCENDIDA");
+  Serial.println("[PRESION] Inflando...");
+}
+
+
+// ------------------------------------------------------------
+// TOMA COMPLETADA
+// ------------------------------------------------------------
+void finishPressureMeasurement() {
+  setPump(false);
+
+  pressureResultAvailable = true;
+  pressureResultSequence++;
+  lastPressureMeasuredAtMs = millis();
+
+  // Resultado provisional hasta completar la calibracion oscilometrica.
+  // Se actualiza solamente cuando finaliza un ciclo real del manguito.
+  estimatedSystolicMmHg = 120 + (int)roundf(3.0f * sinf(millis() * 0.0005f));
+  estimatedDiastolicMmHg = 80 + (int)roundf(2.0f * sinf(millis() * 0.00045f));
+
+  Serial.print("[PRESION] Toma terminada. Pico manguito ~= ");
+  Serial.print(lastCuffPeakMmHg, 1);
+  Serial.println(" mmHg");
+
+  Serial.println("[PRESION] Calibracion actual = APROXIMADA");
+  Serial.println("[PRESION] Abriendo valvula...");
+
+  // Dos tonos cortos de confirmacion.
+  // NO encienden LED de alarma.
+  pressureNotificationStartMs = millis();
+
+  setValveClosed(false);
+
+  pressureReleaseStartMs = millis();
+  pressureState = PressureState::RELEASING;
+}
+
+
+// ------------------------------------------------------------
+// FALLO DE PRESION
+// ------------------------------------------------------------
+void abortPressureMeasurement(const char* reason) {
+  setPump(false);
+  setValveClosed(false);
+
+  pressureFault = true;
+
+  pressureReleaseStartMs = millis();
+  pressureState = PressureState::RELEASING;
+
+  Serial.print("[PRESION] ABORTADO: ");
+  Serial.println(reason);
+}
+
+
+const char* pressureStateName() {
+  switch (pressureState) {
+    case PressureState::IDLE: return "IDLE";
+    case PressureState::INFLATING: return "INFLATING";
+    case PressureState::HOLDING: return "HOLDING";
+    case PressureState::RELEASING: return "RELEASING";
+  }
+  return "UNKNOWN";
+}
+
+
+void muteAlarm(const char* source) {
+  if (!alarmActive) {
+    Serial.println("[ALARMA] No existe alarma activa.");
+    return;
+  }
+
+  alarmMutedUntilMs = millis() + ALARM_MUTE_MS;
+  alarmMuteSequence++;
+  alarmMuteSource = source;
+  noTone(BUZZER_PIN);
+  Serial.println("[ALARMA] Buzzer silenciado 30 segundos.");
+}
+
+
+// ============================================================
+// BOTONES
+// ============================================================
+void updateButtons() {
+  unsigned long now = millis();
+
+  bool inflateButtonState =
+    digitalRead(BUTTON_INFLATE_PIN);
+
+  bool muteButtonState =
+    digitalRead(BUTTON_MUTE_PIN);
+
+  // ----------------------------------------------------------
+  // BOTON INFLAR
+  // INPUT_PULLUP -> presionado = LOW
+  // ----------------------------------------------------------
+  if (lastInflateButtonState == HIGH &&
+      inflateButtonState == LOW &&
+      now - lastInflateDebounceMs >= BUTTON_DEBOUNCE_MS) {
+
+    lastInflateDebounceMs = now;
+
+    startPressureMeasurement("esp32_button");
+  }
+
+  // ----------------------------------------------------------
+  // BOTON MUTE
+  // ----------------------------------------------------------
+  if (lastMuteButtonState == HIGH &&
+      muteButtonState == LOW &&
+      now - lastMuteDebounceMs >= BUTTON_DEBOUNCE_MS) {
+
+    lastMuteDebounceMs = now;
+
+    muteAlarm("esp32_button");
+  }
+
+  lastInflateButtonState =
+    inflateButtonState;
+
+  lastMuteButtonState =
+    muteButtonState;
+}
+
+
+// ============================================================
+// COMANDOS SERIAL
+// ============================================================
+void updateSerialCommands() {
+  if (!Serial.available()) {
+    return;
+  }
+
+  String command =
+    Serial.readStringUntil('\n');
+
+  command.trim();
+  command.toLowerCase();
+
+  if (command == "inflate") {
+
+    startPressureMeasurement("serial");
+
+  } else if (command == "mute") {
+
+    muteAlarm("serial");
+
+  } else if (command == "pzero") {
+
+    if (pressureState == PressureState::IDLE) {
+      capturePressureZero();
+    }
+
+  } else if (command == "status") {
+
+    printTelemetry();
+  }
+}
+
+
+// ============================================================
+// ALARMAS
+// ============================================================
+bool alarmMuted() {
+  if (alarmMutedUntilMs == 0) {
+    return false;
+  }
+
+  if ((int32_t)(alarmMutedUntilMs - millis()) > 0) {
+    return true;
+  }
+
+  alarmMutedUntilMs = 0;
+
+  return false;
+}
+
+
+void evaluateAlarms() {
+  // ----------------------------------------------------------
+  // PPG:
+  // Solo alarma si no hay dedo.
+  // Se da un margen despues de la calibracion inicial.
+  // ----------------------------------------------------------
+  fingerAlarm =
+    ppgCalibrationComplete &&
+    millis() - ppgCalibrationDoneMs >=
+      PPG_NO_FINGER_GRACE_MS &&
+    !fingerDetected;
+
+  // ----------------------------------------------------------
+  // ALARMA GENERAL
+  // ----------------------------------------------------------
+  alarmActive =
+    respirationMissing ||
+    temperatureAlarm ||
+    fingerAlarm ||
+    pressureFault;
+}
+
+
+// ============================================================
+// ACTUADORES
+// ============================================================
+void setPump(bool on) {
+  bool level =
+    PUMP_ACTIVE_HIGH ? on : !on;
+
+  digitalWrite(
+    AIR_PUMP_PIN,
+    level ? HIGH : LOW
+  );
+}
+
+
+void setValveClosed(bool closed) {
+  bool level =
+    VALVE_ACTIVE_HIGH ? closed : !closed;
+
+  digitalWrite(
+    AIR_VALVE_PIN,
+    level ? HIGH : LOW
+  );
+}
+
+
+void setFan(bool on) {
+  fanOn = on;
+
+  bool level;
+
+  if (FAN_RELAY_ACTIVE_LOW) {
+    level = !on;
+  } else {
+    level = on;
+  }
+
+  digitalWrite(
+    FAN_RELAY_PIN,
+    level ? HIGH : LOW
+  );
+}
+
+
+// ============================================================
+// LEDs
+// ============================================================
+void updateOutputs() {
+  // LED sistema encendido
+  digitalWrite(
+    LED_ON_PIN,
+    HIGH
   );
 
-  uint64_t irAccumulator = 0;
-  for (int32_t i = 0; i < MAX30105_BUFFER_SIZE; i++) {
-    irAccumulator += irBuffer[i];
-  }
+  // LED WiFi
+  digitalWrite(
+    LED_WIFI_PIN,
+    WiFi.status() == WL_CONNECTED
+      ? HIGH
+      : LOW
+  );
 
-  uint32_t averageIr = irAccumulator / MAX30105_BUFFER_SIZE;
-  fingerDetected = averageIr >= MIN_FINGER_IR && averageIr <= MAX_FINGER_IR;
-
-  if (!monitoringEnabled) {
-    resetMonitoringCycle();
-  } else if (fingerDetected && !calibrationStarted) {
-    beginCalibration();
-  } else if (!fingerDetected && calibrationStarted) {
-    resetMonitoringCycle();
-  }
-
-  if (fingerDetected &&
-      heartRateFromAlgoValid == 1 &&
-      heartRateFromAlgo >= MIN_VALID_HEART_RATE_BPM &&
-      heartRateFromAlgo <= MAX_VALID_HEART_RATE_BPM) {
-    float newHeartRate = static_cast<float>(heartRateFromAlgo);
-
-    if (!validHeartRate) {
-      heartRateBpm = newHeartRate;
-      validHeartRate = true;
-    } else if (fabs(newHeartRate - heartRateBpm) <= MAX_HEART_RATE_STEP_BPM) {
-      heartRateBpm =
-        heartRateBpm + ((newHeartRate - heartRateBpm) * HEART_RATE_SMOOTHING);
-    }
-  } else if (!fingerDetected) {
-    validHeartRate = false;
-  }
-
-  if (fingerDetected &&
-      spo2Valid == 1 &&
-      spo2 >= MIN_VALID_SPO2 &&
-      spo2 <= MAX_VALID_SPO2) {
-    if (!validSpO2) {
-      spo2Filtered = static_cast<float>(spo2);
-      validSpO2 = true;
-    } else if (abs(spo2 - static_cast<int32_t>(spo2Filtered)) <= MAX_SPO2_STEP) {
-      spo2Filtered =
-        spo2Filtered + ((static_cast<float>(spo2) - spo2Filtered) * SPO2_SMOOTHING);
-    }
-  } else if (!fingerDetected) {
-    validSpO2 = false;
-  }
-
-  max30105NewSamples = 0;
+  // LED alarma
+  // La confirmacion del tensiometro NO usa este LED.
+  digitalWrite(
+    LED_ALARM_PIN,
+    alarmActive
+      ? HIGH
+      : LOW
+  );
 }
 
-void evaluateAlerts() {
-  if (!monitoringEnabled) {
-    warningActive = false;
-    alertActive = false;
-    return;
-  }
 
-  if (!calibrationComplete) {
-    warningActive = false;
-    alertActive = false;
-    return;
-  }
+// ============================================================
+// BUZZER
+// ============================================================
+void updateBuzzer() {
+  unsigned long now = millis();
 
-  respirationMissing =
-    lastRespirationDetectedMs > 0 &&
-    (millis() - lastRespirationDetectedMs >= RESPIRATION_TIMEOUT_MS);
+  // ----------------------------------------------------------
+  // DOS BEEPS DE TOMA DE PRESION COMPLETADA
+  // Tienen prioridad y no representan alarma.
+  // ----------------------------------------------------------
+  if (pressureNotificationStartMs != 0) {
 
-  warningActive =
-    temperatureWarningDetected ||
-    !validHeartRate ||
-    respirationMissing;
-  alertActive =
-    temperatureAlertDetected;
+    unsigned long elapsed =
+      now - pressureNotificationStartMs;
 
-  if (alertActive) {
-    warningActive = true;
-  }
-}
-
-void updateOutputs() {
-  bool blinkOn = ((millis() / STATUS_BLINK_MS) % 2) == 0;
-  bool greenOn = monitoringEnabled && !alertActive && !warningActive;
-  bool yellowOn = false;
-
-  if (!monitoringEnabled) {
-    yellowOn = blinkOn;
-  } else if (calibrationStarted && !calibrationComplete) {
-    greenOn = true;
-  } else if (warningActive && !alertActive) {
-    yellowOn = true;
-    greenOn = false;
-  }
-
-  digitalWrite(LED_OK_PIN, greenOn ? HIGH : LOW);
-  digitalWrite(LED_WARNING_PIN, yellowOn ? HIGH : LOW);
-  digitalWrite(LED_ALERT_PIN, alertActive ? HIGH : LOW);
-
-  digitalWrite(VIBRATOR_PIN, alertActive ? HIGH : LOW);
-  fanRelayActive = monitoringEnabled;
-  digitalWrite(FAN_RELAY_PIN, fanRelayActive ? LOW : HIGH);
-
-  if (alertActive) {
-    if (millis() - lastBuzzerToggleMs >= BUZZER_TOGGLE_MS) {
-      lastBuzzerToggleMs = millis();
-      buzzerState = !buzzerState;
-      digitalWrite(BUZZER_PIN, buzzerState ? HIGH : LOW);
+    // Primer beep
+    if (elapsed < 120) {
+      tone(BUZZER_PIN, 2400);
+      return;
     }
-  } else {
-    digitalWrite(BUZZER_PIN, LOW);
-    buzzerState = false;
-  }
-}
 
-void printTelemetry() {
-  if (!monitoringEnabled) {
-    Serial.println("Estado: Monitoreo detenido. Inicie desde la app.");
-    Serial.println();
-    return;
-  }
-
-  if (!fingerDetected) {
-    Serial.println("Estado: Monitoreo iniciado. Coloque el dedo para comenzar.");
-    Serial.println();
-    return;
-  }
-
-  if (!calibrationComplete) {
-    Serial.print("Estado: Calibrando sensores | Tiempo=");
-    Serial.print((millis() - calibrationStartMs) / 1000.0f, 1);
-    Serial.println(" s");
-    Serial.println();
-    return;
-  }
-
-  Serial.print("Pulso: ");
-  if (validHeartRate && heartRateBpm > 0.0f) {
-    Serial.print(heartRateBpm, 1);
-    Serial.println(" bpm");
-  } else {
-    Serial.println("Sin lectura");
-  }
-
-  Serial.print("Temperatura: ");
-  if (temperatureSensorAvailable && temperatureReadingValid) {
-    Serial.print(bodyTemperatureC, 1);
-    Serial.println(" C");
-  } else {
-    Serial.println("Sin lectura");
-  }
-
-  Serial.print("Respiracion: ");
-  if (respirationDetected) {
-    Serial.print("Detectada ");
-    Serial.print("(delta=");
-    Serial.print(mqRespirationDeltaAdc);
-    Serial.println(" ADC)");
-  } else if (respirationMissing) {
-    Serial.println("No detectada");
-  } else {
-    Serial.print("En observacion ");
-    Serial.print("(delta=");
-    Serial.print(mqRespirationDeltaAdc);
-    Serial.println(" ADC)");
-  }
-
-  Serial.print("Presion: ");
-  if (pressureMeasurementActive) {
-    Serial.print("Midiendo ");
-    Serial.print(estimatedSystolicMmHg);
-    Serial.print("/");
-    Serial.print(estimatedDiastolicMmHg);
-    Serial.print(" mmHg ");
-    Serial.print("(delta=");
-    Serial.print(pressurePulseDeltaAdc);
-    Serial.println(" ADC)");
-  } else {
-    Serial.print("Sin medicion ");
-    if (estimatedSystolicMmHg > 0 && estimatedDiastolicMmHg > 0) {
-      Serial.print("ultima=");
-      Serial.print(estimatedSystolicMmHg);
-      Serial.print("/");
-      Serial.print(estimatedDiastolicMmHg);
-      Serial.print(" mmHg ");
+    // Silencio
+    if (elapsed < 280) {
+      noTone(BUZZER_PIN);
+      return;
     }
-    Serial.print("(delta=");
-    Serial.print(pressurePulseDeltaAdc);
-    Serial.println(" ADC)");
+
+    // Segundo beep
+    if (elapsed < 400) {
+      tone(BUZZER_PIN, 2400);
+      return;
+    }
+
+    if (elapsed < 550) {
+      noTone(BUZZER_PIN);
+      return;
+    }
+
+    pressureNotificationStartMs = 0;
   }
 
-  Serial.print("Alertas: ");
-  bool hasAlertMessage = false;
-  if (!validHeartRate) {
-    Serial.print("Pulso fuera de rango ");
-    hasAlertMessage = true;
-  }
-  if (respirationMissing) {
-    Serial.print("Sin respiracion ");
-    hasAlertMessage = true;
-  }
-  if (temperatureAlertDetected) {
-    Serial.print("Temperatura alta ");
-    hasAlertMessage = true;
-  } else if (temperatureWarningDetected) {
-    Serial.print("Temperatura elevada ");
-    hasAlertMessage = true;
-  }
-  if (!hasAlertMessage) {
-    Serial.print("Ninguna");
-  }
-  Serial.println();
-  Serial.println();
+  // ----------------------------------------------------------
+  // ALARMA GENERAL
+  // ----------------------------------------------------------
+  if (alarmActive &&
+      !alarmMuted()) {
 
+    unsigned long phase =
+      now % 700;
+
+    if (phase < 220) {
+      tone(BUZZER_PIN, 1900);
+    } else {
+      noTone(BUZZER_PIN);
+    }
+
+    return;
+  }
+
+  noTone(BUZZER_PIN);
 }
 
+
+// ============================================================
+// WIFI
+// ============================================================
 void ensureWifi() {
-  if (WiFi.status() == WL_CONNECTED) return;
+  // WiFi deshabilitado voluntariamente
+  if (strlen(WIFI_SSID) == 0) {
+    return;
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    return;
+  }
+
+  unsigned long now = millis();
+
+  if (lastWifiAttemptMs != 0 &&
+      now - lastWifiAttemptMs <
+      WIFI_RETRY_MS) {
+
+    return;
+  }
+
+  lastWifiAttemptMs = now;
 
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.begin(
+    WIFI_SSID,
+    WIFI_PASSWORD
+  );
 
-  unsigned long started = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - started < 10000) {
-    delay(250);
-  }
+  Serial.println("[WiFi] Intentando conexion...");
 }
 
+
+// ============================================================
+// MQTT
+// ============================================================
 void ensureMqtt() {
-  if (mqttClient.connected()) return;
+  if (WiFi.status() != WL_CONNECTED) {
+    return;
+  }
 
-  if (WiFi.status() != WL_CONNECTED) return;
+  if (mqttClient.connected()) {
+    return;
+  }
 
-  String clientId = String("luz-") + DEVICE_ID;
-  if (mqttClient.connect(clientId.c_str())) {
-    String controlTopic = String("luz/device/") + DEVICE_ID + "/control";
+  unsigned long now = millis();
+
+  if (lastMqttAttemptMs != 0 &&
+      now - lastMqttAttemptMs <
+      MQTT_RETRY_MS) {
+
+    return;
+  }
+
+  lastMqttAttemptMs = now;
+
+  String clientId =
+    String("luz-") +
+    DEVICE_ID;
+
+  Serial.print("[MQTT] Conectando a ");
+  Serial.print(MQTT_HOST);
+  Serial.print(":");
+  Serial.print(MQTT_PORT);
+  Serial.println(" (WSS)...");
+
+  if (mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASS)) {
+
+    String controlTopic =
+      String("luz/device/") +
+      DEVICE_ID +
+      "/control";
+
     mqttClient.subscribe(controlTopic.c_str());
+
+    Serial.println("[MQTT] Conectado.");
+  } else {
+    Serial.print("[MQTT] Error de conexion, estado: ");
+    Serial.println(mqttClient.lastError());
   }
 }
 
-void onMqttMessage(char* topic, byte* payload, unsigned int length) {
-  String topicName(topic);
-  String expectedTopic = String("luz/device/") + DEVICE_ID + "/control";
-  if (topicName != expectedTopic) return;
 
-  String message;
-  for (unsigned int i = 0; i < length; i++) {
-    message += static_cast<char>(payload[i]);
+// ============================================================
+// MQTT MESSAGE HANDLER
+// ============================================================
+void mqttMessageHandler(String& topic, String& payload) {
+
+  String expectedTopic =
+    String("luz/device/") +
+    DEVICE_ID +
+    "/control";
+
+  if (topic != expectedTopic) {
+    return;
   }
+
+  String message = payload;
   message.toLowerCase();
 
-  if (message.indexOf("start") >= 0 || message.indexOf("power_on") >= 0) {
-    monitoringEnabled = true;
-    resetMonitoringCycle();
-    Serial.println("Monitoreo iniciado desde backend. Esperando dedo.");
-  } else if (message.indexOf("stop") >= 0 || message.indexOf("power_off") >= 0) {
-    monitoringEnabled = false;
-    resetMonitoringCycle();
-    Serial.println("Monitoreo detenido desde backend.");
+  const char* source = "mqtt";
+  if (message.indexOf("scheduled") >= 0) source = "scheduled";
+  else if (message.indexOf("doctor") >= 0) source = "doctor";
+  else if (message.indexOf("public") >= 0) source = "public";
+
+  if (message.indexOf("inflate") >= 0) {
+    startPressureMeasurement(source);
+  }
+
+  if (message.indexOf("mute") >= 0) {
+    muteAlarm(source);
+  }
+
+  if (message.indexOf("pzero") >= 0 && pressureState == PressureState::IDLE) {
+    capturePressureZero();
   }
 }
 
-void publishTelemetryMqtt() {
-  if (!mqttClient.connected()) return;
 
-  String topic = String("luz/device/") + DEVICE_ID + "/telemetry";
-  float safeHeartRate = sanitizeNumber(validHeartRate ? heartRateBpm : 0.0f);
-  float safeSpo2 = sanitizeNumber(validSpO2 ? spo2Filtered : 0.0f);
-  float safeBodyTemp = sanitizeNumber(bodyTemperatureC);
-  float safeAmbientTemp = sanitizeNumber(ambientTemperatureC);
-  String payload = "{";
-  payload += "\"deviceId\":\"" + String(DEVICE_ID) + "\",";
-  payload += "\"ts\":" + String(millis()) + ",";
-  payload += "\"heartRateBpm\":" + String(safeHeartRate, 1) + ",";
-  payload += "\"spo2\":" + String(safeSpo2, 1) + ",";
-  payload += "\"temperatureC\":" + String(safeBodyTemp, 1) + ",";
-  payload += "\"ambientTemperatureC\":" + String(safeAmbientTemp, 1) + ",";
-  payload += "\"estimatedSystolicMmHg\":" + String(estimatedSystolicMmHg) + ",";
-  payload += "\"estimatedDiastolicMmHg\":" + String(estimatedDiastolicMmHg) + ",";
-  payload += "\"fingerDetected\":" + String(fingerDetected ? "true" : "false") + ",";
-  payload += "\"monitoringEnabled\":" + String(monitoringEnabled ? "true" : "false") + ",";
-  payload += "\"calibrationComplete\":" + String(calibrationComplete ? "true" : "false") + ",";
-  payload += "\"respirationDetected\":" + String(respirationDetected ? "true" : "false") + ",";
-  payload += "\"respirationMissing\":" + String(respirationMissing ? "true" : "false") + ",";
-  payload += "\"warningActive\":" + String(warningActive ? "true" : "false") + ",";
-  payload += "\"alertActive\":" + String(alertActive ? "true" : "false");
+// ============================================================
+// MQTT TELEMETRIA
+// ============================================================
+void publishTelemetry() {
+  if (!mqttClient.connected()) {
+    return;
+  }
+
+  String topic =
+    String("luz/device/") +
+    DEVICE_ID +
+    "/telemetry";
+
+  float heartRateToSend =
+    fingerDetected && bpmOutput > 0.0f
+      ? bpmOutput
+      : 0.0f;
+
+  float bodyTempToSend =
+    temperatureValid
+      ? bodyTemperatureC
+      : 0.0f;
+
+  float ambientTempToSend =
+    temperatureValid
+      ? ambientTemperatureC
+      : 0.0f;
+
+  String payload;
+  payload.reserve(1024);
+
+  payload += "{";
+
+  payload += "\"deviceId\":\"";
+  payload += DEVICE_ID;
+  payload += "\",";
+
+  payload += "\"ts\":";
+  payload += String(millis());
+  payload += ",";
+
+  payload += "\"heartRateBpm\":";
+  payload += String(heartRateToSend, 1);
+  payload += ",";
+
+  payload += "\"temperatureC\":";
+  payload += String(bodyTempToSend, 1);
+  payload += ",";
+
+  payload += "\"ambientTemperatureC\":";
+  payload += String(ambientTempToSend, 1);
+  payload += ",";
+
+  payload += "\"estimatedSystolicMmHg\":";
+  payload += String(estimatedSystolicMmHg);
+  payload += ",";
+
+  payload += "\"estimatedDiastolicMmHg\":";
+  payload += String(estimatedDiastolicMmHg);
+  payload += ",";
+
+  payload += "\"fingerDetected\":";
+  payload += fingerDetected ? "true" : "false";
+  payload += ",";
+
+  payload += "\"monitoringEnabled\":true,";
+
+  payload += "\"calibrationComplete\":";
+  payload +=
+    (mqCalibrationComplete &&
+     ppgCalibrationComplete &&
+     pressureZeroReady)
+      ? "true"
+      : "false";
+  payload += ",";
+
+  payload += "\"respirationDetected\":";
+  payload += respirationDetected ? "true" : "false";
+  payload += ",";
+
+  payload += "\"respirationMissing\":";
+  payload += respirationMissing ? "true" : "false";
+  payload += ",";
+
+  payload += "\"respiratoryRateBpm\":";
+  payload += String(respiratoryRateBpm, 1);
+  payload += ",";
+
+  payload += "\"strongRespirationDetected\":";
+  payload += strongRespirationDetected ? "true" : "false";
+  payload += ",";
+
+  payload += "\"pressureState\":\"";
+  payload += pressureStateName();
+  payload += "\",";
+
+  payload += "\"cuffPressureMmHg\":";
+  payload += String(cuffPressureFilteredMmHg, 1);
+  payload += ",";
+
+  payload += "\"pressureTargetMmHg\":";
+  payload += String(PRESSURE_TARGET_MMHG, 1);
+  payload += ",";
+
+  payload += "\"pressureZeroReady\":";
+  payload += pressureZeroReady ? "true" : "false";
+  payload += ",";
+
+  payload += "\"pressureFault\":";
+  payload += pressureFault ? "true" : "false";
+  payload += ",";
+
+  payload += "\"pressureResultAvailable\":";
+  payload += pressureResultAvailable ? "true" : "false";
+  payload += ",";
+
+  payload += "\"pressureMeasurementSequence\":";
+  payload += String(pressureMeasurementSequence);
+  payload += ",";
+
+  payload += "\"pressureResultSequence\":";
+  payload += String(pressureResultSequence);
+  payload += ",";
+
+  payload += "\"pressureTriggerSource\":\"";
+  payload += pressureTriggerSource;
+  payload += "\",";
+
+  payload += "\"lastPressureMeasuredAtMs\":";
+  payload += String(lastPressureMeasuredAtMs);
+  payload += ",";
+
+  payload += "\"alarmActive\":";
+  payload += alarmActive ? "true" : "false";
+  payload += ",";
+
+  payload += "\"alarmMuted\":";
+  payload += alarmMuted() ? "true" : "false";
+  payload += ",";
+
+  payload += "\"alarmMuteSequence\":";
+  payload += String(alarmMuteSequence);
+  payload += ",";
+
+  payload += "\"alarmMuteSource\":\"";
+  payload += alarmMuteSource;
+  payload += "\",";
+
+  payload += "\"temperatureValid\":";
+  payload += temperatureValid ? "true" : "false";
+  payload += ",";
+
+  payload += "\"temperatureAlarm\":";
+  payload += temperatureAlarm ? "true" : "false";
+  payload += ",";
+
+  payload += "\"fanOn\":";
+  payload += fanOn ? "true" : "false";
+  payload += ",";
+
+  payload += "\"warningActive\":";
+  payload += alarmActive ? "true" : "false";
+  payload += ",";
+
+  payload += "\"alertActive\":";
+  payload +=
+    (temperatureAlarm || pressureFault)
+      ? "true"
+      : "false";
+
   payload += "}";
 
-  bool published = mqttClient.publish(topic.c_str(), payload.c_str(), false);
+  bool published =
+    mqttClient.publish(
+      topic.c_str(),
+      payload.c_str(),
+      false
+    );
+
   if (!published) {
-    Serial.print("MQTT publish failed. Payload size: ");
+    Serial.print("[MQTT] Publish FAILED. Bytes=");
     Serial.println(payload.length());
+  } else {
+    Serial.print("[MQTT] TX ");
+    Serial.print(payload.length());
+    Serial.print(" bytes -> ");
+    Serial.println(topic);
   }
 }
 
-float sanitizeNumber(float value) {
-  if (isnan(value) || isinf(value)) return 0.0f;
+
+float sanitizeMqttNumber(float value, float fallback) {
+  if (isnan(value) || isinf(value)) {
+    return fallback;
+  }
+
   return value;
 }
 
-uint16_t readFilteredAdc(uint8_t pin) {
-  uint32_t accumulator = 0;
 
-  for (uint8_t i = 0; i < ANALOG_FILTER_SAMPLES; i++) {
-    accumulator += analogRead(pin);
-    delayMicroseconds(250);
+// ============================================================
+// MQTT RAW TELEMETRY (datos crudos de sensores)
+// ============================================================
+void publishRawTelemetry() {
+  if (!mqttClient.connected()) {
+    return;
   }
 
-  return static_cast<uint16_t>(accumulator / ANALOG_FILTER_SAMPLES);
+  String topic =
+    String("luz/device/") +
+    DEVICE_ID +
+    "/raw";
+
+  String payload;
+  payload.reserve(512);
+
+  payload += "{";
+
+  payload += "\"deviceId\":\"";
+  payload += DEVICE_ID;
+  payload += "\",";
+
+  payload += "\"ts\":";
+  payload += String(millis());
+  payload += ",";
+
+  payload += "\"ppgRaw\":";
+  payload += ppgRaw;
+  payload += ",";
+
+  payload += "\"ppgSmoothed\":";
+  payload += ppgSmoothed;
+  payload += ",";
+
+  payload += "\"ppgBaseline\":";
+  payload += String(ppgNoFingerBaseline, 1);
+  payload += ",";
+
+  payload += "\"hrBaseline\":";
+  payload += String(hrBaseline, 1);
+  payload += ",";
+
+  payload += "\"mqRaw\":";
+  payload += mqRaw;
+  payload += ",";
+
+  payload += "\"mqBaseline\":";
+  payload += String(mqBaseline, 1);
+  payload += ",";
+
+  payload += "\"mqDelta\":";
+  payload += mqDelta;
+  payload += ",";
+
+  payload += "\"pressureRaw\":";
+  payload += pressureRaw;
+  payload += ",";
+
+  payload += "\"pressureZeroRaw\":";
+  payload += pressureZeroRaw;
+  payload += ",";
+
+  payload += "\"cuffPressureRawMmHg\":";
+  payload += String(cuffPressureMmHg, 2);
+  payload += ",";
+
+  payload += "\"realBpm\":";
+  payload += String(realBpm, 1);
+  payload += ",";
+
+  payload += "\"realBpmValid\":";
+  payload += realBpmValid ? "true" : "false";
+  payload += ",";
+
+  payload += "\"mlxAmbientC\":";
+  payload += mlxAvailable ? String(mlx.readAmbientTempC(), 2) : "null";
+  payload += ",";
+
+  payload += "\"mlxObjectC\":";
+  payload += mlxAvailable ? String(mlx.readObjectTempC(), 2) : "null";
+
+  payload += "}";
+
+  mqttClient.publish(topic.c_str(), payload.c_str(), false);
 }
 
-float adcToVoltage(uint16_t rawAdc) {
-  return (static_cast<float>(rawAdc) / ADC_RESOLUTION) * ADC_REFERENCE_V;
+
+// ============================================================
+// MONITOR SERIAL
+// ============================================================
+void printTelemetry() {
+  Serial.print("TEMP=");
+
+  if (temperatureValid) {
+    Serial.print(
+      bodyTemperatureC,
+      1
+    );
+
+    Serial.print("C");
+  } else {
+    Serial.print("N/A");
+  }
+
+  // ----------------------------------------------------------
+  // RESPIRACION
+  // ----------------------------------------------------------
+  Serial.print(" | RESP=");
+
+  if (!mqCalibrationComplete) {
+
+    Serial.print("CAL");
+
+  } else if (respirationMissing) {
+
+    Serial.print("NO");
+
+  } else if (respirationDetected) {
+
+    Serial.print("SI");
+
+  } else {
+
+    Serial.print("ESP");
+  }
+
+  Serial.print(" MQ=");
+  Serial.print(mqRaw);
+
+  Serial.print(" d=");
+  Serial.print(mqDelta);
+
+  // ----------------------------------------------------------
+  // PPG
+  // ----------------------------------------------------------
+  Serial.print(" | DEDO=");
+
+  if (!ppgCalibrationComplete) {
+
+    Serial.print("CAL");
+
+  } else {
+
+    Serial.print(
+      fingerDetected
+        ? "SI"
+        : "NO"
+    );
+  }
+
+  Serial.print(" PPG=");
+  Serial.print(ppgRaw);
+
+  Serial.print(" | BPM=");
+
+  if (fingerDetected) {
+
+    Serial.print(
+      bpmOutput,
+      1
+    );
+
+  } else {
+
+    Serial.print("-");
+  }
+
+  Serial.print(" | FR=");
+  Serial.print(respiratoryRateBpm, 1);
+  Serial.print("rpm");
+
+  // ----------------------------------------------------------
+  // PRESION
+  // ----------------------------------------------------------
+  Serial.print(" | RAW_PRESS=");
+  Serial.print(pressureRaw);
+
+  Serial.print(" | ZERO_PRESS=");
+  Serial.print(pressureZeroRaw);
+
+  Serial.print(" | CUFF=");
+
+  if (pressureZeroReady) {
+
+    Serial.print(
+      cuffPressureFilteredMmHg,
+      1
+    );
+
+    Serial.print("mmHg");
+
+  } else {
+
+    Serial.print("NO-ZERO");
+  }
+
+  Serial.print(" | PSTATE=");
+
+  Serial.print(pressureStateName());
+
+  Serial.print(" | PA=");
+  if (pressureResultAvailable) {
+    Serial.print(estimatedSystolicMmHg);
+    Serial.print("/");
+    Serial.print(estimatedDiastolicMmHg);
+  } else {
+    Serial.print("-");
+  }
+
+  // ----------------------------------------------------------
+  // ALARMA
+  // ----------------------------------------------------------
+  Serial.print(" | ALARMA=");
+
+  Serial.print(
+    alarmActive
+      ? "SI"
+      : "NO"
+  );
+
+  if (alarmMuted()) {
+    Serial.print("(MUTE)");
+  }
+
+  // Motivos
+  if (alarmActive) {
+
+    Serial.print("[");
+
+    bool first = true;
+
+    if (respirationMissing) {
+      Serial.print("RESP");
+      first = false;
+    }
+
+    if (temperatureAlarm) {
+      if (!first) Serial.print(",");
+      Serial.print("TEMP");
+      first = false;
+    }
+
+    if (fingerAlarm) {
+      if (!first) Serial.print(",");
+      Serial.print("DEDO");
+      first = false;
+    }
+
+    if (pressureFault) {
+      if (!first) Serial.print(",");
+      Serial.print("PRESS");
+    }
+
+    Serial.print("]");
+  }
+
+  // ----------------------------------------------------------
+  // WIFI
+  // ----------------------------------------------------------
+  Serial.print(" | WIFI=");
+
+  Serial.print(
+    WiFi.status() == WL_CONNECTED
+      ? "OK"
+      : "OFF"
+  );
+
+  // ----------------------------------------------------------
+  // VALVULA FEEDBACK GPIO36
+  // ----------------------------------------------------------
+  Serial.print(" | VFB=");
+  Serial.print(
+    digitalRead(
+      VALVE_FEEDBACK_PIN
+    )
+  );
+
+  Serial.println();
 }

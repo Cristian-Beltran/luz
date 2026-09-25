@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import mqtt, { type MqttClient } from "mqtt";
 import {
   Activity,
+  BellOff,
   Bot,
-  Droplets,
+  Gauge,
   HeartPulse,
   Radio,
   Thermometer,
@@ -29,19 +30,20 @@ import { Progress } from "@/components/ui/progress";
 import axios from "@/lib/axios";
 import { ClinicalStatusBadge } from "@/components/clinical/clinical-ui";
 import {
-  diastolicState,
   pulseState,
-  spo2State,
   systolicState,
   tempState,
   type ClinicalState,
 } from "@/components/clinical/clinical-ranges";
 
-const MQTT_WS_URL = "wss://broker.hivemq.com:8884/mqtt";
+const MQTT_WS_URL = import.meta.env.VITE_MQTT_WS_URL as string | undefined ?? "wss://server-local.tail9af6ac.ts.net";
+const MQTT_USER = import.meta.env.VITE_MQTT_USER as string | undefined ?? "";
+const MQTT_PASSWORD = import.meta.env.VITE_MQTT_PASSWORD as string | undefined ?? "";
 const DEVICE_ID = "esp32-luz-01";
 const TELEMETRY_TOPIC = `luz/device/${DEVICE_ID}/telemetry`;
 const SESSION_TOPIC = `luz/device/${DEVICE_ID}/session`;
 const AI_TOPIC = `luz/device/${DEVICE_ID}/ai`;
+const EVENTS_TOPIC = `luz/device/${DEVICE_ID}/events`;
 const DEVICE_TIMEOUT_MS = 12_000;
 const AI_MESSAGE_TTL_MS = 10_000;
 
@@ -50,9 +52,8 @@ type LivePoint = {
   deviceId: string;
   pulse?: number;
   pulseRaw?: number;
-  spo2?: number;
-  spo2Raw?: number;
   temperatureC?: number;
+  respiratoryRateBpm?: number;
   ambientTemperatureC?: number;
   systolic?: number;
   diastolic?: number;
@@ -63,6 +64,9 @@ type LivePoint = {
   respirationMissing: boolean;
   warningActive: boolean;
   alertActive: boolean;
+  alarmMuted: boolean;
+  pressureState: string;
+  cuffPressureMmHg?: number;
 };
 
 type SessionState = {
@@ -72,6 +76,10 @@ type SessionState = {
   startedAt: string | null;
   endedAt: string | null;
   powerOn: boolean;
+  pressureIntervalMinutes: number;
+  lastPressureAt: string | null;
+  ultrafiltrationGoalLiters: number | null;
+  ultrafiltrationActualLiters: number | null;
   patient: { id: string; fullname: string } | null;
   publishedAt: string;
 };
@@ -84,6 +92,14 @@ type AiMessage = {
   expiresAt: number;
 };
 
+type SessionEvent = {
+  id: string;
+  type: string;
+  source: string;
+  description: string;
+  createdAt: string;
+};
+
 function toNumber(value: unknown): number | undefined {
   const n = Number(value);
   return Number.isFinite(n) ? n : undefined;
@@ -92,18 +108,15 @@ function toNumber(value: unknown): number | undefined {
 function toPoint(
   payload: Record<string, unknown>,
   smoothedPulse?: number,
-  smoothedSpo2?: number,
 ): LivePoint {
   const rawPulse = toNumber(payload.heartRateBpm);
-  const rawSpo2 = toNumber(payload.spo2);
   return {
     ts: new Date().toISOString(),
     deviceId: String(payload.deviceId ?? DEVICE_ID),
     pulse: smoothedPulse ?? rawPulse,
     pulseRaw: rawPulse,
-    spo2: smoothedSpo2 ?? rawSpo2,
-    spo2Raw: rawSpo2,
     temperatureC: toNumber(payload.temperatureC),
+    respiratoryRateBpm: toNumber(payload.respiratoryRateBpm),
     ambientTemperatureC: toNumber(payload.ambientTemperatureC),
     systolic: toNumber(payload.estimatedSystolicMmHg),
     diastolic: toNumber(payload.estimatedDiastolicMmHg),
@@ -114,6 +127,9 @@ function toPoint(
     respirationMissing: Boolean(payload.respirationMissing),
     warningActive: Boolean(payload.warningActive),
     alertActive: Boolean(payload.alertActive),
+    alarmMuted: Boolean(payload.alarmMuted),
+    pressureState: String(payload.pressureState ?? "IDLE"),
+    cuffPressureMmHg: toNumber(payload.cuffPressureMmHg),
   };
 }
 
@@ -126,6 +142,10 @@ function toSessionState(payload: Record<string, unknown>): SessionState {
     startedAt: typeof payload.startedAt === "string" ? payload.startedAt : null,
     endedAt: typeof payload.endedAt === "string" ? payload.endedAt : null,
     powerOn: Boolean(payload.powerOn),
+    pressureIntervalMinutes: toNumber(payload.pressureIntervalMinutes) ?? 30,
+    lastPressureAt: typeof payload.lastPressureAt === "string" ? payload.lastPressureAt : null,
+    ultrafiltrationGoalLiters: toNumber(payload.ultrafiltrationGoalLiters) ?? null,
+    ultrafiltrationActualLiters: toNumber(payload.ultrafiltrationActualLiters) ?? null,
     patient: patient
       ? {
           id: String(patient.id ?? ""),
@@ -177,25 +197,30 @@ export default function PublicMonitoringPage() {
   const [points, setPoints] = useState<LivePoint[]>([]);
   const [session, setSession] = useState<SessionState | null>(null);
   const [aiMessages, setAiMessages] = useState<AiMessage[]>([]);
+  const [events, setEvents] = useState<SessionEvent[]>([]);
   const [now, setNow] = useState(Date.now());
-  const [powerLoading, setPowerLoading] = useState(false);
+  const [commandLoading, setCommandLoading] = useState<"inflate" | "mute" | null>(null);
 
   const SMOOTHING_ALPHA = 0.15;
   const smoothedPulseRef = useRef<number | undefined>(undefined);
-  const smoothedSpo2Ref = useRef<number | undefined>(undefined);
   const respirationWindowRef = useRef<number[]>([]);
   const RESP_WINDOW_SIZE = 20;
 
   useEffect(() => {
-    const client: MqttClient = mqtt.connect(MQTT_WS_URL, {
+    const connectOptions: Record<string, unknown> = {
       clientId: `public-monitor-${Math.random().toString(16).slice(2, 8)}`,
       reconnectPeriod: 2000,
       connectTimeout: 10_000,
-    });
+    };
+    if (MQTT_USER) {
+      connectOptions.username = MQTT_USER;
+      connectOptions.password = MQTT_PASSWORD;
+    }
+    const client: MqttClient = mqtt.connect(MQTT_WS_URL, connectOptions);
 
     client.on("connect", () => {
       setMqttOnline(true);
-      client.subscribe([TELEMETRY_TOPIC, SESSION_TOPIC, AI_TOPIC]);
+      client.subscribe([TELEMETRY_TOPIC, SESSION_TOPIC, AI_TOPIC, EVENTS_TOPIC]);
     });
 
     client.on("offline", () => setMqttOnline(false));
@@ -207,10 +232,7 @@ export default function PublicMonitoringPage() {
         const payload = JSON.parse(message.toString()) as Record<string, unknown>;
         if (topic === TELEMETRY_TOPIC) {
           const rawPulse = toNumber(payload.heartRateBpm);
-          const rawSpo2 = toNumber(payload.spo2);
-
           let smoothedPulse: number | undefined;
-          let smoothedSpo2: number | undefined;
 
           if (rawPulse !== undefined) {
             if (smoothedPulseRef.current === undefined) {
@@ -222,23 +244,13 @@ export default function PublicMonitoringPage() {
             smoothedPulse = smoothedPulseRef.current;
           }
 
-          if (rawSpo2 !== undefined) {
-            if (smoothedSpo2Ref.current === undefined) {
-              smoothedSpo2Ref.current = rawSpo2;
-            } else {
-              smoothedSpo2Ref.current =
-                smoothedSpo2Ref.current * (1 - SMOOTHING_ALPHA) + rawSpo2 * SMOOTHING_ALPHA;
-            }
-            smoothedSpo2 = smoothedSpo2Ref.current;
-          }
-
           const respDetected = Boolean(payload.respirationDetected);
           respirationWindowRef.current.push(respDetected ? 1 : 0);
           if (respirationWindowRef.current.length > RESP_WINDOW_SIZE) {
             respirationWindowRef.current.shift();
           }
 
-          setPoints((prev) => [...prev, toPoint(payload, smoothedPulse, smoothedSpo2)].slice(-160));
+          setPoints((prev) => [...prev, toPoint(payload, smoothedPulse)].slice(-160));
         }
         if (topic === SESSION_TOPIC) {
           setSession(toSessionState(payload));
@@ -254,6 +266,20 @@ export default function PublicMonitoringPage() {
               .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
               .slice(-3);
           });
+        }
+        if (topic === EVENTS_TOPIC) {
+          const incoming = Array.isArray(payload.events) ? payload.events : [];
+          setEvents(incoming.flatMap((event) => {
+            if (!event || typeof event !== "object") return [];
+            const item = event as Record<string, unknown>;
+            return [{
+              id: String(item.id ?? Math.random()),
+              type: String(item.type ?? "event"),
+              source: String(item.source ?? "system"),
+              description: String(item.description ?? "Evento"),
+              createdAt: String(item.createdAt ?? new Date().toISOString()),
+            }];
+          }));
         }
       } catch {
         return;
@@ -292,21 +318,20 @@ export default function PublicMonitoringPage() {
           second: "2-digit",
         }),
         pulse: point.pulse ?? null,
-        spo2: point.spo2 ?? null,
         temp: point.temperatureC ?? null,
         ambient: point.ambientTemperatureC ?? null,
         systolic: point.systolic ?? null,
         diastolic: point.diastolic ?? null,
-        respiration: point.respirationDetected ? 1 : 0,
+        respiration: point.respiratoryRateBpm ?? null,
       })),
     [points],
   );
 
-  const respirationStrength = useMemo(() => {
+  const respirationStrength = (() => {
     const w = respirationWindowRef.current;
     if (w.length === 0) return 0;
     return (w.reduce((a, b) => a + b, 0) / w.length) * 100;
-  }, [points]);
+  })();
 
   const pressureDomain = useMemo(() => {
     const sys = chartData.map((d) => d.systolic).filter((v) => v !== null) as number[];
@@ -318,12 +343,12 @@ export default function PublicMonitoringPage() {
     return [mn - 20, mx + 5];
   }, [chartData]);
 
-  const onPower = async (state: "on" | "off") => {
-    setPowerLoading(true);
+  const onCommand = async (command: "inflate" | "mute") => {
+    setCommandLoading(command);
     try {
-      await axios.patch("/monitoring/power", { state });
+      await axios.post("/monitoring/command", { command, source: "public" });
     } finally {
-      setPowerLoading(false);
+      setCommandLoading(null);
     }
   };
 
@@ -349,7 +374,8 @@ export default function PublicMonitoringPage() {
                   <span>Inicio {formatTime(session?.startedAt)}</span>
                   <span>ID {session?.sessionId ? session.sessionId.slice(0, 8) : "sin dato"}</span>
                   <span>Ultima {formatTime(last?.ts)}</span>
-                  <span>Sistema {session?.powerOn ? "encendido" : "apagado"}</span>
+                  <span>PA cada {session?.pressureIntervalMinutes ?? 30} min</span>
+                  <span>Ultima PA {formatTime(session?.lastPressureAt)}</span>
                 </div>
               </div>
               <div className="hidden text-right text-xs text-slate-400 md:block">
@@ -373,9 +399,10 @@ export default function PublicMonitoringPage() {
               <CardContent className="grid grid-cols-2 gap-2 p-3 text-xs">
                 <MiniInfo label="Dedo" value={last?.fingerDetected ? "Si" : "No"} active={Boolean(last?.fingerDetected)} />
                 <MiniInfo label="Monitoreo" value={last?.monitoringEnabled ? "Activo" : "Espera"} active={Boolean(last?.monitoringEnabled)} />
-                <MiniInfo label="Sistema" value={session?.powerOn ? "Encendido" : "Apagado"} active={Boolean(session?.powerOn)} />
+                <MiniInfo label="Presion" value={last?.pressureState ?? "IDLE"} active={last?.pressureState !== "IDLE"} />
                 <MiniInfo label="Calibracion" value={last?.calibrationComplete ? "Lista" : "Pendiente"} active={Boolean(last?.calibrationComplete)} />
                 <MiniInfo label="Paquetes" value={points.length} active={points.length > 0} />
+                <MiniInfo label="UF objetivo" value={session?.ultrafiltrationGoalLiters != null ? `${session.ultrafiltrationGoalLiters} L` : "Pendiente"} active={session?.ultrafiltrationGoalLiters != null} />
               </CardContent>
             </Card>
 
@@ -417,7 +444,7 @@ export default function PublicMonitoringPage() {
             <Card className="min-h-0 border-white/10 bg-white/[0.06] text-slate-100 shadow-xl">
               <CardContent className="flex h-full flex-col justify-center gap-2 p-3 text-xs text-slate-300">
                 <div className="flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2">
-                  <span>Estado ESP</span>
+                  <span>Estado ESP / manguito</span>
                   <Badge variant={deviceOnline ? "default" : "secondary"}>
                     {deviceOnline ? "Online" : "Sin senal"}
                   </Badge>
@@ -429,47 +456,47 @@ export default function PublicMonitoringPage() {
                   </Badge>
                 </div>
                 <div className="truncate rounded-lg border border-white/10 bg-black/20 px-3 py-2">
-                  Device {last?.deviceId ?? DEVICE_ID}
+                  Manguito {last?.cuffPressureMmHg?.toFixed(1) ?? "0.0"} mmHg
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <Button
                     variant="outline"
                     className="border-white/10 bg-black/20 text-slate-100 hover:bg-black/30"
-                    disabled={!session?.active || session?.powerOn || powerLoading}
-                    onClick={() => void onPower("on")}
+                    disabled={!session?.active || !deviceOnline || commandLoading !== null || last?.pressureState !== "IDLE"}
+                    onClick={() => void onCommand("inflate")}
                   >
-                    Encender
+                    <Gauge className="mr-1 h-4 w-4" /> {commandLoading === "inflate" ? "Enviando" : "Tomar PA"}
                   </Button>
                   <Button
                     variant="outline"
                     className="border-white/10 bg-black/20 text-slate-100 hover:bg-black/30"
-                    disabled={!session?.active || !session?.powerOn || powerLoading}
-                    onClick={() => void onPower("off")}
+                    disabled={!session?.active || !deviceOnline || commandLoading !== null || !last?.warningActive}
+                    onClick={() => void onCommand("mute")}
                   >
-                    Apagar
+                    <BellOff className="mr-1 h-4 w-4" /> {last?.alarmMuted ? "Silenciada" : "Silenciar"}
                   </Button>
+                </div>
+                <div className="max-h-28 space-y-1 overflow-auto rounded-lg border border-white/10 bg-black/20 p-2">
+                  <div className="text-[10px] uppercase text-slate-400">Eventos de sesion</div>
+                  {events.length ? events.slice(0, 8).map((event) => (
+                    <div key={event.id} className="text-[10px] leading-4 text-slate-300">
+                      {formatTime(event.createdAt)} · {event.description} ({event.source})
+                    </div>
+                  )) : <div className="text-[10px] text-slate-500">Sin eventos</div>}
                 </div>
               </CardContent>
             </Card>
           </aside>
 
           <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-2">
-            <div className="grid grid-cols-5 gap-2">
+            <div className="grid grid-cols-4 gap-2">
               <MetricCard
-                label="Pulso"
+                label="FC"
                 icon={<HeartPulse className="h-4 w-4" />}
                 value={last?.pulse}
                 unit="bpm"
                 state={pulseState(last?.pulse)}
                 progress={scale(last?.pulse, 40, 160)}
-              />
-              <MetricCard
-                label="SpO2"
-                icon={<Droplets className="h-4 w-4" />}
-                value={last?.spo2}
-                unit="%"
-                state={spo2State(last?.spo2)}
-                progress={scale(last?.spo2, 85, 100)}
               />
               <MetricCard
                 label="Temp"
@@ -480,30 +507,31 @@ export default function PublicMonitoringPage() {
                 progress={scale(last?.temperatureC, 35, 40)}
               />
               <MetricCard
-                label="Sistolica"
+                label="Presion arterial"
                 icon={<Activity className="h-4 w-4" />}
-                value={last?.systolic}
+                value={last?.systolic && last?.diastolic ? undefined : last?.systolic}
+                displayValue={last?.systolic && last?.diastolic ? `${last.systolic.toFixed(0)}/${last.diastolic.toFixed(0)}` : "--/--"}
                 unit="mmHg"
                 state={systolicState(last?.systolic)}
                 progress={scale(last?.systolic, 80, 180)}
               />
               <MetricCard
-                label="Diastolica"
-                icon={<Activity className="h-4 w-4" />}
-                value={last?.diastolic}
-                unit="mmHg"
-                state={diastolicState(last?.diastolic)}
-                progress={scale(last?.diastolic, 50, 120)}
+                label="Frecuencia respiratoria"
+                icon={<Waves className="h-4 w-4" />}
+                value={last?.respiratoryRateBpm}
+                unit="rpm"
+                state={last?.respiratoryRateBpm && last.respiratoryRateBpm >= 12 && last.respiratoryRateBpm <= 20 ? "ok" : "warn"}
+                progress={scale(last?.respiratoryRateBpm, 0, 40)}
               />
             </div>
 
             <div className="grid min-h-0 grid-cols-2 gap-2">
               <ChartCard
-                title="Pulso / SpO2"
+                title="FC / Frecuencia respiratoria"
                 data={chartData}
                 lines={[
-                  { key: "pulse", name: "Pulso", color: "#38bdf8" },
-                  { key: "spo2", name: "SpO2", color: "#34d399" },
+                  { key: "pulse", name: "FC", color: "#38bdf8" },
+                  { key: "respiration", name: "FR", color: "#34d399" },
                 ]}
               />
               <ChartCard
@@ -515,10 +543,10 @@ export default function PublicMonitoringPage() {
                 ]}
               />
               <ChartCard
-                title="Respiracion"
+                title="Frecuencia respiratoria"
                 data={chartData}
                 lines={[
-                  { key: "respiration", name: "Aire", color: "#22d3ee" },
+                  { key: "respiration", name: "rpm", color: "#22d3ee" },
                 ]}
               />
               <ChartCard

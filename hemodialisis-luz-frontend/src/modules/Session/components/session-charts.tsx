@@ -30,7 +30,7 @@ type Row = {
   sessionCode: string; // S1, S2...
   dateLabel: string; // "02 nov"
   avgPulse: number; // bpm
-  avgSpo2: number; // %
+  avgRespiratoryRate: number; // rpm
   avgTemp: number; // °C
   avgSys: number; // mmHg
   avgDia: number; // mmHg
@@ -68,7 +68,7 @@ export function SessionCharts({ sessions }: { sessions: Session[] }) {
     return list.map((s, i) => {
       const recs = (s.records ?? []) as SessionData[];
       const avgPulse = avg(recs, (r) => numeric(r.pulse));
-      const avgSpo2 = avg(recs, (r) => numeric(r.oxygenSaturation));
+      const avgRespiratoryRate = avg(recs, (r) => numeric(r.respiratoryRateBpm));
       const avgTemp = avg(recs, (r) =>
         numeric(
           (r as SessionData & { temperatureC?: number }).temperatureC ?? null,
@@ -85,7 +85,7 @@ export function SessionCharts({ sessions }: { sessions: Session[] }) {
         sessionCode: `S${i + 1}`,
         dateLabel: toDateLabel(s.startedAt),
         avgPulse,
-        avgSpo2,
+        avgRespiratoryRate,
         avgTemp,
         avgSys,
         avgDia,
@@ -107,8 +107,8 @@ export function SessionCharts({ sessions }: { sessions: Session[] }) {
 
   /* ---- Config semántica para leyendas/tooltip ---- */
   const cfg = {
-    avgPulse: { label: "Pulso (BPM)" },
-    avgSpo2: { label: "SpO₂ (%)" },
+    avgPulse: { label: "FC (bpm)" },
+    avgRespiratoryRate: { label: "Frecuencia respiratoria (rpm)" },
     avgTemp: { label: "Temperatura (°C)" },
     avgSys: { label: "Sistólica (mmHg)" },
     avgDia: { label: "Diastólica (mmHg)" },
@@ -117,15 +117,15 @@ export function SessionCharts({ sessions }: { sessions: Session[] }) {
 
   return (
     <div className="grid gap-6 xl:grid-cols-2">
-      {/* Card 1: Pulso y SpO2 como áreas superpuestas (gradiente sutil) */}
+      {/* Card 1: frecuencia cardiaca y respiratoria */}
       <Card className="bg-gradient-to-b from-background to-muted/30 border-dotted">
         <CardHeader>
           <CardTitle>Tendencias Cardiorrespiratorias</CardTitle>
-          <CardDescription>Promedio por sesión (Pulso y SpO₂)</CardDescription>
+          <CardDescription>Promedio por sesión (FC y FR)</CardDescription>
         </CardHeader>
         <CardContent>
           <ChartContainer
-            config={{ avgPulse: cfg.avgPulse, avgSpo2: cfg.avgSpo2 }}
+            config={{ avgPulse: cfg.avgPulse, avgRespiratoryRate: cfg.avgRespiratoryRate }}
             className="h-[320px] w-full"
           >
             <ResponsiveContainer width="100%" height="100%">
@@ -135,7 +135,7 @@ export function SessionCharts({ sessions }: { sessions: Session[] }) {
                     <stop offset="5%" stopOpacity={0.35} />
                     <stop offset="95%" stopOpacity={0.05} />
                   </linearGradient>
-                  <linearGradient id="gSpo2" x1="0" y1="0" x2="0" y2="1">
+                  <linearGradient id="gRespiratoryRate" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopOpacity={0.35} />
                     <stop offset="95%" stopOpacity={0.05} />
                   </linearGradient>
@@ -155,11 +155,11 @@ export function SessionCharts({ sessions }: { sessions: Session[] }) {
                 />
                 <Area
                   type="monotone"
-                  dataKey="avgSpo2"
-                  name={cfg.avgSpo2.label}
+                  dataKey="avgRespiratoryRate"
+                  name={cfg.avgRespiratoryRate.label}
                   strokeWidth={2}
                   fillOpacity={1}
-                  fill="url(#gSpo2)"
+                  fill="url(#gRespiratoryRate)"
                 />
               </AreaChart>
             </ResponsiveContainer>

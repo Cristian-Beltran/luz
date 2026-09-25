@@ -7,7 +7,7 @@ export type PatientOwnStatus = {
   latestSession: Session | null;
   latestRecord: {
     pulse: number;
-    oxygenSaturation: number;
+    respiratoryRateBpm: number;
     temperatureC: number;
     systolic: number;
     diastolic: number;

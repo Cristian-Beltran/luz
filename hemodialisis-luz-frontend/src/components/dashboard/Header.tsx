@@ -47,12 +47,11 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
                   <Droplet className="h-4 w-4" />
                 </div>
                 <h1 className="truncate text-sm font-semibold tracking-tight sm:text-base lg:text-lg">
-                  HemoSense · Multisensor No Invasivo
+                  Prototipo de Monitor Multiparamétrico
                 </h1>
               </div>
               <p className="mx-auto mt-1 max-w-xl truncate text-xs text-muted-foreground md:mx-0">
-                Monitoreo integral de parámetros sanguíneos (SpO₂, Hb estimada,
-                FC, PI, variabilidad)
+                FC, presión arterial, temperatura y frecuencia respiratoria
               </p>
             </div>
 

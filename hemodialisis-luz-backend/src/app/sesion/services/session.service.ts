@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import { Session } from '../entities/session.entity';
 import { SessionData } from '../entities/session-data.entity';
 import { SessionAiMessage } from '../entities/session-ai-message.entity';
+import { SessionEvent } from '../entities/session-event.entity';
 import { Patient } from '../../users/entities/patient.entity';
 import { User } from '../../users/entities/user.entity';
 import { CreateSessionDto } from '../dtos/create-session.dto';
@@ -25,6 +26,8 @@ export class SessionService {
     private readonly userRepo: Repository<User>,
     @InjectRepository(SessionAiMessage)
     private readonly aiMessageRepo: Repository<SessionAiMessage>,
+    @InjectRepository(SessionEvent)
+    private readonly eventRepo: Repository<SessionEvent>,
   ) {}
 
   async findPatientByUserId(userId: string): Promise<Patient> {
@@ -55,8 +58,12 @@ export class SessionService {
       patient,
       deviceId: dto.deviceId?.trim() || DEFAULT_DEVICE_ID,
       weightBefore: dto.weightBefore,
-      weightAfter: dto.weightAfter,
       dryWeight: dto.dryWeight,
+      ultrafiltrationGoalLiters: this.calculateUltrafiltration(
+        dto.weightBefore,
+        dto.dryWeight,
+      ),
+      pressureIntervalMinutes: dto.pressureIntervalMinutes ?? 30,
       reportedSymptoms: dto.reportedSymptoms,
       dizziness: Boolean(dto.dizziness),
       nausea: Boolean(dto.nausea),
@@ -67,13 +74,15 @@ export class SessionService {
       chills: Boolean(dto.chills),
       staffObservations: dto.staffObservations,
     });
-    return this.sessionRepo.save(session);
+    const saved = await this.sessionRepo.save(session);
+    await this.addEvent(saved.id, 'session_started', 'system', 'Sesion iniciada');
+    return saved;
   }
 
   async findActiveSession(): Promise<Session | null> {
     return this.sessionRepo.findOne({
       where: { endedAt: null },
-      relations: ['patient', 'records', 'aiMessages'],
+      relations: ['patient', 'records', 'aiMessages', 'events'],
       order: { startedAt: 'DESC' },
     });
   }
@@ -81,11 +90,12 @@ export class SessionService {
   async findActiveByDevice(deviceId: string): Promise<Session | null> {
     return this.sessionRepo.findOne({
       where: { deviceId, endedAt: null },
-      relations: ['patient', 'records', 'aiMessages'],
+      relations: ['patient', 'records', 'aiMessages', 'events'],
       order: {
         startedAt: 'DESC',
         records: { recordedAt: 'ASC' },
         aiMessages: { createdAt: 'DESC' },
+        events: { createdAt: 'DESC' },
       },
     });
   }
@@ -93,10 +103,11 @@ export class SessionService {
   async findOneDetailed(sessionId: string): Promise<Session | null> {
     return this.sessionRepo.findOne({
       where: { id: sessionId },
-      relations: ['patient', 'records', 'aiMessages'],
+      relations: ['patient', 'records', 'aiMessages', 'events'],
       order: {
         records: { recordedAt: 'ASC' },
         aiMessages: { createdAt: 'DESC' },
+        events: { createdAt: 'DESC' },
       },
     });
   }
@@ -113,10 +124,10 @@ export class SessionService {
     const record = this.dataRepo.create({
       session,
       pulse: dto.pulse,
-      oxygenSaturation: dto.oxygenSaturation,
       temperatureC: dto.temperatureC,
       systolic: dto.systolic,
       diastolic: dto.diastolic,
+      respiratoryRateBpm: dto.respiratoryRateBpm,
     });
 
     return this.dataRepo.save(record);
@@ -126,7 +137,6 @@ export class SessionService {
     session: Session,
     payload: {
       pulse: number;
-      oxygenSaturation: number;
       temperatureC: number;
       systolic: number;
       diastolic: number;
@@ -136,6 +146,7 @@ export class SessionService {
       calibrationComplete: boolean;
       respirationDetected: boolean;
       respirationMissing: boolean;
+      respiratoryRateBpm: number;
       warningActive: boolean;
       alertActive: boolean;
     },
@@ -144,13 +155,20 @@ export class SessionService {
     return this.dataRepo.save(record);
   }
 
-  async closeSession(sessionId: string): Promise<Session> {
+  async closeSession(sessionId: string, weightAfter?: number): Promise<Session> {
     const session = await this.sessionRepo.findOne({
       where: { id: sessionId },
     });
     if (!session) throw new NotFoundException('Session not found');
     if (session.endedAt) return session; // idempotente
 
+    if (weightAfter !== undefined) {
+      session.weightAfter = weightAfter;
+      session.ultrafiltrationActualLiters = this.calculateUltrafiltration(
+        session.weightBefore,
+        weightAfter,
+      );
+    }
     session.endedAt = new Date();
     session.sessionDurationMinutes = Math.max(
       1,
@@ -158,7 +176,51 @@ export class SessionService {
         (session.endedAt.getTime() - session.startedAt.getTime()) / 60_000,
       ),
     );
-    return this.sessionRepo.save(session);
+    const saved = await this.sessionRepo.save(session);
+    await this.addEvent(saved.id, 'session_closed', 'system', 'Sesion finalizada', {
+      weightAfter: saved.weightAfter,
+      ultrafiltrationActualLiters: saved.ultrafiltrationActualLiters,
+    });
+    return saved;
+  }
+
+  async addEvent(
+    sessionId: string,
+    type: string,
+    source: string,
+    description: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<SessionEvent> {
+    const session = await this.sessionRepo.findOne({ where: { id: sessionId } });
+    if (!session) throw new NotFoundException('Session not found');
+    return this.eventRepo.save(
+      this.eventRepo.create({
+        session,
+        type,
+        source,
+        description,
+        metadata: metadata ? JSON.stringify(metadata) : undefined,
+      }),
+    );
+  }
+
+  async markPressureMeasured(
+    sessionId: string,
+    systolic: number,
+    diastolic: number,
+    source: string,
+  ): Promise<void> {
+    const session = await this.sessionRepo.findOne({ where: { id: sessionId } });
+    if (!session) return;
+    session.lastPressureAt = new Date();
+    await this.sessionRepo.save(session);
+    await this.addEvent(
+      sessionId,
+      'pressure_completed',
+      source,
+      `Presion arterial ${systolic}/${diastolic} mmHg`,
+      { systolic, diastolic },
+    );
   }
 
   async addAiMessage(sessionId: string, message: string): Promise<SessionAiMessage> {
@@ -191,22 +253,24 @@ export class SessionService {
 
     return this.sessionRepo.find({
       where: { patient: { id: patientId } },
-      relations: ['records', 'patient', 'aiMessages'],
+      relations: ['records', 'patient', 'aiMessages', 'events'],
       order: {
         startedAt: 'DESC',
         records: { recordedAt: 'ASC' },
         aiMessages: { createdAt: 'DESC' },
+        events: { createdAt: 'DESC' },
       },
     });
   }
 
   async getAll(): Promise<Session[]> {
     return this.sessionRepo.find({
-      relations: ['records', 'patient', 'aiMessages'],
+      relations: ['records', 'patient', 'aiMessages', 'events'],
       order: {
         startedAt: 'DESC',
         records: { recordedAt: 'ASC' },
         aiMessages: { createdAt: 'DESC' },
+        events: { createdAt: 'DESC' },
       },
     });
   }
@@ -220,11 +284,12 @@ export class SessionService {
     const patient = await this.findPatientByUserId(userId);
     const activeSession = await this.sessionRepo.findOne({
         where: { patient: { id: patient.id }, endedAt: null },
-        relations: ['records', 'patient', 'aiMessages'],
+        relations: ['records', 'patient', 'aiMessages', 'events'],
         order: {
           startedAt: 'DESC',
           records: { recordedAt: 'DESC' },
           aiMessages: { createdAt: 'DESC' },
+          events: { createdAt: 'DESC' },
         },
       });
 
@@ -232,11 +297,12 @@ export class SessionService {
       activeSession ??
       (await this.sessionRepo.findOne({
         where: { patient: { id: patient.id } },
-        relations: ['records', 'patient', 'aiMessages'],
+        relations: ['records', 'patient', 'aiMessages', 'events'],
         order: {
           startedAt: 'DESC',
           records: { recordedAt: 'DESC' },
           aiMessages: { createdAt: 'DESC' },
+          events: { createdAt: 'DESC' },
         },
       }));
 
@@ -249,5 +315,15 @@ export class SessionService {
       latestSession,
       latestRecord,
     };
+  }
+
+  private calculateUltrafiltration(
+    weightBefore?: number,
+    comparisonWeight?: number,
+  ): number | undefined {
+    if (!Number.isFinite(weightBefore) || !Number.isFinite(comparisonWeight)) {
+      return undefined;
+    }
+    return Math.max(0, Number(((weightBefore as number) - (comparisonWeight as number)).toFixed(2)));
   }
 }

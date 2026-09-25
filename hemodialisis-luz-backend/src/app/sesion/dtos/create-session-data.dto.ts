@@ -7,11 +7,6 @@ export class CreateSessionDataDto {
   @Max(250)
   pulse: number;
 
-  @IsInt()
-  @Min(0)
-  @Max(100)
-  oxygenSaturation: number;
-
   @IsNumber()
   @Min(30) // salvaguarda ante lecturas inválidas
   @Max(45) // típico rango clínico en °C
@@ -26,4 +21,9 @@ export class CreateSessionDataDto {
   @Min(30)
   @Max(200)
   diastolic: number;
+
+  @IsNumber()
+  @Min(0)
+  @Max(80)
+  respiratoryRateBpm: number;
 }

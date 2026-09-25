@@ -30,8 +30,15 @@ export const monitoringService = {
     const res = await axios.patch("/monitoring/power", { state });
     return res.data;
   },
-  stop: async (): Promise<Session | { message: string }> => {
-    const res = await axios.patch("/monitoring/stop");
+  command: async (
+    command: "inflate" | "mute" | "pzero",
+    source: "doctor" | "public",
+  ): Promise<{ ok: boolean }> => {
+    const res = await axios.post("/monitoring/command", { command, source });
+    return res.data;
+  },
+  stop: async (weightAfter: number): Promise<Session | { message: string }> => {
+    const res = await axios.patch("/monitoring/stop", { weightAfter });
     return res.data;
   },
 };

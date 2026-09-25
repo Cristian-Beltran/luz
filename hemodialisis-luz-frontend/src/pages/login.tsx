@@ -87,11 +87,10 @@ export default function LoginPage() {
             </div>
             <div className="leading-tight">
               <h1 className="text-sm font-semibold tracking-tight">
-                Prototipo de monitor multiparametrico para pacientes en estado de
-                hemodialisis
+                Prototipo de Monitor Multiparamétrico
               </h1>
               <p className="text-[11px] text-muted-foreground">
-                Ingreso seguro
+                FC, presión arterial, temperatura y frecuencia respiratoria
               </p>
             </div>
           </div>

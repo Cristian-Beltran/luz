@@ -37,7 +37,7 @@ export default function PatientHistoryPage() {
       sessions: sessions.length,
       records: records.length,
       avgPulse: avg(records.map((r) => r.pulse)).toFixed(0),
-      avgSpo2: avg(records.map((r) => r.oxygenSaturation)).toFixed(0),
+      avgRespiratoryRate: avg(records.map((r) => r.respiratoryRateBpm)).toFixed(0),
     };
   }, [sessions]);
 
@@ -53,8 +53,8 @@ export default function PatientHistoryPage() {
         <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <Info title="Sesiones" value={summary.sessions} icon={<CalendarDays className="h-4 w-4" />} />
           <Info title="Lecturas" value={summary.records} icon={<Activity className="h-4 w-4" />} />
-          <Info title="Promedio pulso" value={`${summary.avgPulse} bpm`} icon={<HeartPulse className="h-4 w-4" />} />
-          <Info title="Promedio SpO2" value={`${summary.avgSpo2}%`} icon={<Waves className="h-4 w-4" />} />
+          <Info title="Promedio FC" value={`${summary.avgPulse} bpm`} icon={<HeartPulse className="h-4 w-4" />} />
+          <Info title="Promedio FR" value={`${summary.avgRespiratoryRate} rpm`} icon={<Waves className="h-4 w-4" />} />
         </CardContent>
       </Card>
 

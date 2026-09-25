@@ -10,6 +10,7 @@ import {
 import { Patient } from '../../users/entities/patient.entity';
 import { SessionData } from './session-data.entity';
 import { SessionAiMessage } from './session-ai-message.entity';
+import { SessionEvent } from './session-event.entity';
 
 @Entity('sessions')
 export class Session {
@@ -36,6 +37,18 @@ export class Session {
 
   @Column('float', { nullable: true })
   dryWeight?: number;
+
+  @Column('float', { nullable: true })
+  ultrafiltrationGoalLiters?: number;
+
+  @Column('float', { nullable: true })
+  ultrafiltrationActualLiters?: number;
+
+  @Column('int', { default: 30 })
+  pressureIntervalMinutes: number;
+
+  @Column({ type: 'datetime', nullable: true })
+  lastPressureAt?: Date;
 
   @Column('int', { nullable: true })
   sessionDurationMinutes?: number;
@@ -74,4 +87,7 @@ export class Session {
     cascade: true,
   })
   aiMessages: SessionAiMessage[];
+
+  @OneToMany(() => SessionEvent, (event) => event.session, { cascade: true })
+  events: SessionEvent[];
 }

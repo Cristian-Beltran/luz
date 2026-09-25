@@ -50,7 +50,7 @@ function buildCsvFromSessions(sessions: Session[]): string {
     "recordId",
     "recordedAt",
     "pulse",
-    "oxygenSaturation",
+    "respiratoryRateBpm",
     "temperatureC",
     "systolic",
     "diastolic",
@@ -74,7 +74,7 @@ function buildCsvFromSessions(sessions: Session[]): string {
         r.id,
         safeISO(r.recordedAt),
         r.pulse,
-        r.oxygenSaturation,
+        r.respiratoryRateBpm,
         r.temperatureC,
         r.systolic,
         r.diastolic,
@@ -137,8 +137,8 @@ export default function SessionPage() {
       vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
 
     const pulse = records.map((r) => r.pulse).filter((v) => Number.isFinite(v));
-    const spo2 = records
-      .map((r) => r.oxygenSaturation)
+    const respiratoryRate = records
+      .map((r) => r.respiratoryRateBpm)
       .filter((v) => Number.isFinite(v));
     const temp = records
       .map((r) => r.temperatureC)
@@ -148,7 +148,7 @@ export default function SessionPage() {
       sessionsCount: filteredSessions.length,
       recordsCount: records.length,
       avgPulse: avg(pulse),
-      avgSpo2: avg(spo2),
+      avgRespiratoryRate: avg(respiratoryRate),
       avgTemp: avg(temp),
     };
   }, [filteredSessions]);
@@ -302,9 +302,9 @@ export default function SessionPage() {
           </Card>
           <Card className="animate-in fade-in slide-in-from-bottom-1 duration-500" style={{ animationDelay: "120ms" }}>
             <CardHeader>
-              <CardDescription className="text-[11px] uppercase tracking-wide inline-flex items-center gap-1.5"><HeartPulse className="h-3.5 w-3.5" />Promedio Pulso / SpO2</CardDescription>
+              <CardDescription className="text-[11px] uppercase tracking-wide inline-flex items-center gap-1.5"><HeartPulse className="h-3.5 w-3.5" />Promedio FC / FR</CardDescription>
               <CardTitle className="tracking-tight">
-                {clinicalSummary.avgPulse.toFixed(0)} bpm / {clinicalSummary.avgSpo2.toFixed(0)}%
+                {clinicalSummary.avgPulse.toFixed(0)} bpm / {clinicalSummary.avgRespiratoryRate.toFixed(0)} rpm
               </CardTitle>
             </CardHeader>
           </Card>

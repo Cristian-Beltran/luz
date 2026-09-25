@@ -20,6 +20,7 @@ export function ClinicalMetricCard({
   title,
   icon,
   value,
+  displayValue,
   unit,
   state,
   hint,
@@ -28,6 +29,7 @@ export function ClinicalMetricCard({
   title: string;
   icon: ReactNode;
   value?: number;
+  displayValue?: string;
   unit: string;
   state: ClinicalState;
   hint: string;
@@ -47,7 +49,7 @@ export function ClinicalMetricCard({
           <ClinicalStatusBadge state={state} />
         </CardDescription>
         <CardTitle className="text-2xl tracking-tight transition-colors duration-200">
-          {typeof value === "number" ? value.toFixed(1) : "-"}{" "}
+          {displayValue ?? (typeof value === "number" ? value.toFixed(1) : "-")}{" "}
           <span className="text-sm font-normal text-muted-foreground">{unit}</span>
         </CardTitle>
         <p className="text-xs text-muted-foreground">{hint}</p>

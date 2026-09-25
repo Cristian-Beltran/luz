@@ -6,7 +6,7 @@ export interface SensorReading {
   sessionId: string;
   timestamp: string;
   pulseBpm?: number;
-  spo2Percentage?: number;
+  respiratoryRateBpm?: number;
   pressureVoltage?: number;
   breathingPhase?: BreathingPhase;
   createdAt: string;

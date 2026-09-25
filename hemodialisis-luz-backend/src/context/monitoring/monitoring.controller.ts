@@ -3,6 +3,8 @@ import { SessionService } from 'src/app/sesion/services/session.service';
 import { MonitoringService } from './monitoring.service';
 import { StartMonitoringDto } from './dtos/start-monitoring.dto';
 import { DevicePowerDto } from './dtos/device-power.dto';
+import { DeviceCommandDto } from './dtos/device-command.dto';
+import { StopMonitoringDto } from './dtos/stop-monitoring.dto';
 import { WhatsAppService } from 'src/context/whatsapp/whatsapp.service';
 
 const DEVICE_ID = 'esp32-luz-01';
@@ -35,8 +37,8 @@ export class MonitoringController {
       deviceId: DEVICE_ID,
       patientId: dto.patientId,
       weightBefore: dto.weightBefore,
-      weightAfter: dto.weightAfter,
       dryWeight: dto.dryWeight,
+      pressureIntervalMinutes: dto.pressureIntervalMinutes,
       reportedSymptoms: dto.reportedSymptoms,
       dizziness: dto.dizziness,
       nausea: dto.nausea,
@@ -51,7 +53,22 @@ export class MonitoringController {
     this.monitoringService.publishSessionState(DEVICE_ID, session);
     this.monitoringService.publishAiInsights(DEVICE_ID, []);
     this.monitoringService.publishControl(DEVICE_ID, 'power_on');
+    await this.monitoringService.startPressureSchedule(session);
+    await this.monitoringService.publishCurrentEvents(DEVICE_ID);
     return session;
+  }
+
+  @Post('command')
+  async command(@Body() dto: DeviceCommandDto) {
+    return {
+      ok: await this.monitoringService.requestDeviceCommand(
+        DEVICE_ID,
+        dto.command,
+        dto.source,
+      ),
+      command: dto.command,
+      source: dto.source,
+    };
   }
 
   @Patch('power')
@@ -68,18 +85,22 @@ export class MonitoringController {
   }
 
   @Patch('stop')
-  async stop() {
+  async stop(@Body() dto: StopMonitoringDto) {
     const activeSession = await this.sessionService.findActiveSession();
     if (!activeSession) {
       this.monitoringService.setDevicePower(DEVICE_ID, false);
       this.monitoringService.publishControl(DEVICE_ID, 'power_off');
       return { message: 'No active session' };
     }
-    const closedSession = await this.sessionService.closeSession(activeSession.id);
+    const closedSession = await this.sessionService.closeSession(
+      activeSession.id,
+      dto.weightAfter,
+    );
     this.monitoringService.setDevicePower(DEVICE_ID, false);
     this.monitoringService.publishControl(DEVICE_ID, 'power_off');
     this.monitoringService.publishSessionState(DEVICE_ID, null);
     this.monitoringService.publishAiInsights(DEVICE_ID, []);
+    await this.monitoringService.publishCurrentEvents(DEVICE_ID);
     void this.whatsAppService.sendSessionReport(closedSession.id);
     return closedSession;
   }

@@ -7,12 +7,10 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Activity, Droplets, HeartPulse, Thermometer } from "lucide-react";
+import { Activity, HeartPulse, Thermometer, Waves } from "lucide-react";
 import { ClinicalMetricCard } from "@/components/clinical/clinical-ui";
 import {
-  diastolicState,
   pulseState,
-  spo2State,
   systolicState,
   tempState,
 } from "@/components/clinical/clinical-ranges";
@@ -67,7 +65,7 @@ export default function PatientDashboardPage() {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
         <ClinicalMetricCard
-          title="Pulso"
+          title="FC"
           icon={<HeartPulse className="h-3.5 w-3.5" />}
           value={r?.pulse}
           unit="bpm"
@@ -76,12 +74,12 @@ export default function PatientDashboardPage() {
           delay={0}
         />
         <ClinicalMetricCard
-          title="SpO2"
-          icon={<Droplets className="h-3.5 w-3.5" />}
-          value={r?.oxygenSaturation}
-          unit="%"
-          state={spo2State(r?.oxygenSaturation)}
-          hint="Saturacion de oxigeno"
+          title="Frecuencia respiratoria"
+          icon={<Waves className="h-3.5 w-3.5" />}
+          value={r?.respiratoryRateBpm}
+          unit="rpm"
+          state={r?.respiratoryRateBpm && r.respiratoryRateBpm >= 12 && r.respiratoryRateBpm <= 20 ? "ok" : "warn"}
+          hint="Respiraciones por minuto"
           delay={40}
         />
         <ClinicalMetricCard
@@ -94,22 +92,14 @@ export default function PatientDashboardPage() {
           delay={80}
         />
         <ClinicalMetricCard
-          title="Sistolica"
+          title="Presion arterial"
           icon={<Activity className="h-3.5 w-3.5" />}
-          value={r?.systolic}
+          value={r?.systolic && r?.diastolic ? undefined : r?.systolic}
+          displayValue={r?.systolic && r?.diastolic ? `${r.systolic.toFixed(0)}/${r.diastolic.toFixed(0)}` : "--/--"}
           unit="mmHg"
           state={systolicState(r?.systolic)}
-          hint="Presion sistolica"
+          hint="Presion arterial (sistolica/diastolica)"
           delay={120}
-        />
-        <ClinicalMetricCard
-          title="Diastolica"
-          icon={<Activity className="h-3.5 w-3.5" />}
-          value={r?.diastolic}
-          unit="mmHg"
-          state={diastolicState(r?.diastolic)}
-          hint="Presion diastolica"
-          delay={160}
         />
       </div>
 

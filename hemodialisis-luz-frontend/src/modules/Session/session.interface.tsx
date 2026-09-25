@@ -5,8 +5,8 @@ export interface CreateSessionDto {
   patientId: string;
   deviceId?: string;
   weightBefore?: number;
-  weightAfter?: number;
   dryWeight?: number;
+  pressureIntervalMinutes?: number;
   reportedSymptoms?: string;
   dizziness?: boolean;
   nausea?: boolean;
@@ -20,7 +20,6 @@ export interface CreateSessionDto {
 
 export interface CreateSessionDataDto {
   pulse: number; // bpm
-  oxygenSaturation: number; // %
   temperatureC: number; // °C
   systolic: number; // mmHg
   diastolic: number; // mmHg
@@ -30,6 +29,7 @@ export interface CreateSessionDataDto {
   calibrationComplete?: boolean;
   respirationDetected?: boolean;
   respirationMissing?: boolean;
+  respiratoryRateBpm: number;
   warningActive?: boolean;
   alertActive?: boolean;
 }
@@ -38,7 +38,6 @@ export interface CreateSessionDataDto {
 export interface SessionData {
   id: string;
   pulse: number;
-  oxygenSaturation: number;
   temperatureC: number;
   systolic: number;
   diastolic: number;
@@ -48,6 +47,7 @@ export interface SessionData {
   calibrationComplete?: boolean;
   respirationDetected?: boolean;
   respirationMissing?: boolean;
+  respiratoryRateBpm: number;
   warningActive?: boolean;
   alertActive?: boolean;
   recordedAt: string; // ISO
@@ -62,6 +62,10 @@ export interface Session {
   weightBefore?: number | null;
   weightAfter?: number | null;
   dryWeight?: number | null;
+  ultrafiltrationGoalLiters?: number | null;
+  ultrafiltrationActualLiters?: number | null;
+  pressureIntervalMinutes: number;
+  lastPressureAt?: string | null;
   sessionDurationMinutes?: number | null;
   reportedSymptoms?: string | null;
   dizziness?: boolean;
@@ -77,6 +81,14 @@ export interface Session {
     id: string;
     message: string;
     source: string;
+    createdAt: string;
+  }>;
+  events?: Array<{
+    id: string;
+    type: string;
+    source: string;
+    description: string;
+    metadata?: string | null;
     createdAt: string;
   }>;
 }

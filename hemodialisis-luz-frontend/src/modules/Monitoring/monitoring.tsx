@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import mqtt, { type MqttClient } from "mqtt";
-import { Activity, Droplets, HeartPulse, RotateCcw, Thermometer } from "lucide-react";
+import { BellOff, Gauge, HeartPulse, RotateCcw, Thermometer, Waves } from "lucide-react";
 import {
   CartesianGrid,
   Line,
@@ -18,10 +18,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ClinicalMetricCard } from "@/components/clinical/clinical-ui";
 import {
-  diastolicState,
   pulseState,
-  spo2State,
-  systolicState,
   tempState,
 } from "@/components/clinical/clinical-ranges";
 import { patientService } from "@/modules/Patient/data/patient.service";
@@ -33,8 +30,8 @@ import { monitoringService, type MonitoringStatus } from "./monitoring.service";
 type LivePoint = {
   ts: string;
   pulse: number;
-  spo2: number;
   temperatureC: number;
+  respiratoryRateBpm: number;
   systolic: number;
   diastolic: number;
 };
@@ -43,6 +40,7 @@ type SessionDraft = {
   weightBefore: string;
   weightAfter: string;
   dryWeight: string;
+  pressureIntervalMinutes: string;
   reportedSymptoms: string;
   dizziness: boolean;
   nausea: boolean;
@@ -59,15 +57,21 @@ type LatestFlags = {
   alertActive: boolean;
   respirationMissing: boolean;
   fingerDetected: boolean;
+  alarmMuted: boolean;
+  pressureState: string;
+  cuffPressureMmHg: number;
 };
 
-const MQTT_WS_URL = "wss://broker.hivemq.com:8884/mqtt";
+const MQTT_WS_URL = import.meta.env.VITE_MQTT_WS_URL as string | undefined ?? "wss://server-local.tail9af6ac.ts.net";
+const MQTT_USER = import.meta.env.VITE_MQTT_USER as string | undefined ?? "";
+const MQTT_PASSWORD = import.meta.env.VITE_MQTT_PASSWORD as string | undefined ?? "";
 const TOPIC = "luz/device/esp32-luz-01/telemetry";
 
 const initialDraft: SessionDraft = {
   weightBefore: "",
   weightAfter: "",
   dryWeight: "",
+  pressureIntervalMinutes: "30",
   reportedSymptoms: "",
   dizziness: false,
   nausea: false,
@@ -83,8 +87,8 @@ function toPoint(payload: Record<string, unknown>): LivePoint {
   return {
     ts: new Date().toISOString(),
     pulse: Number(payload.heartRateBpm ?? 0),
-    spo2: Number(payload.spo2 ?? 0),
     temperatureC: Number(payload.temperatureC ?? 0),
+    respiratoryRateBpm: Number(payload.respiratoryRateBpm ?? 0),
     systolic: Number(payload.estimatedSystolicMmHg ?? 0),
     diastolic: Number(payload.estimatedDiastolicMmHg ?? 0),
   };
@@ -106,11 +110,15 @@ export default function MonitoringPage() {
   const [draft, setDraft] = useState<SessionDraft>(initialDraft);
   const [previousSession, setPreviousSession] = useState<Session | null>(null);
   const [previousSessionOpen, setPreviousSessionOpen] = useState(false);
+  const [commandLoading, setCommandLoading] = useState<"inflate" | "mute" | null>(null);
   const [flags, setFlags] = useState<LatestFlags>({
     warningActive: false,
     alertActive: false,
     respirationMissing: false,
     fingerDetected: false,
+    alarmMuted: false,
+    pressureState: "IDLE",
+    cuffPressureMmHg: 0,
   });
 
   const refresh = async () => {
@@ -133,11 +141,16 @@ export default function MonitoringPage() {
   }, []);
 
   useEffect(() => {
-    const client: MqttClient = mqtt.connect(MQTT_WS_URL, {
+    const connectOptions: Record<string, unknown> = {
       clientId: `frontend-${Math.random().toString(16).slice(2, 8)}`,
       reconnectPeriod: 2000,
       connectTimeout: 10_000,
-    });
+    };
+    if (MQTT_USER) {
+      connectOptions.username = MQTT_USER;
+      connectOptions.password = MQTT_PASSWORD;
+    }
+    const client: MqttClient = mqtt.connect(MQTT_WS_URL, connectOptions);
 
     client.on("connect", () => {
       setMqttOnline(true);
@@ -156,6 +169,9 @@ export default function MonitoringPage() {
           alertActive: Boolean(payload.alertActive),
           respirationMissing: Boolean(payload.respirationMissing),
           fingerDetected: Boolean(payload.fingerDetected),
+          alarmMuted: Boolean(payload.alarmMuted),
+          pressureState: String(payload.pressureState ?? "IDLE"),
+          cuffPressureMmHg: Number(payload.cuffPressureMmHg ?? 0),
         });
       } catch {
         return;
@@ -175,8 +191,8 @@ export default function MonitoringPage() {
       await monitoringService.start({
         patientId,
         weightBefore: toNumberOrUndefined(draft.weightBefore),
-        weightAfter: toNumberOrUndefined(draft.weightAfter),
         dryWeight: toNumberOrUndefined(draft.dryWeight),
+        pressureIntervalMinutes: toNumberOrUndefined(draft.pressureIntervalMinutes),
         reportedSymptoms: draft.reportedSymptoms || undefined,
         dizziness: draft.dizziness,
         nausea: draft.nausea,
@@ -196,10 +212,15 @@ export default function MonitoringPage() {
   };
 
   const onStop = async () => {
+    const weightAfter = toNumberOrUndefined(draft.weightAfter);
+    if (weightAfter === undefined) {
+      setError("Registra el peso final para calcular la ultrafiltracion real");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      await monitoringService.stop();
+      await monitoringService.stop(weightAfter);
       await refresh();
       setDraft(initialDraft);
       setPoints([]);
@@ -207,6 +228,19 @@ export default function MonitoringPage() {
       setError("No se pudo finalizar la sesion");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const onCommand = async (command: "inflate" | "mute") => {
+    setCommandLoading(command);
+    setError(null);
+    try {
+      const result = await monitoringService.command(command, "doctor");
+      if (!result.ok) setError("El comando no pudo enviarse al ESP32");
+    } catch {
+      setError("No se pudo enviar el comando al ESP32");
+    } finally {
+      setCommandLoading(null);
     }
   };
 
@@ -223,8 +257,8 @@ export default function MonitoringPage() {
       points.map((p) => ({
         t: new Date(p.ts).toLocaleTimeString("es-ES", { minute: "2-digit", second: "2-digit" }),
         pulse: p.pulse,
-        spo2: p.spo2,
         temp: p.temperatureC,
+        respiration: p.respiratoryRateBpm,
         sys: p.systolic,
         dia: p.diastolic,
       })),
@@ -257,13 +291,13 @@ export default function MonitoringPage() {
         <CardHeader>
           <CardTitle className="text-2xl">Monitoreo en tiempo real</CardTitle>
           <CardDescription>
-            La sesion clinica se inicia primero y el ESP espera el comando de encendido.
+            FC, presion arterial, temperatura y frecuencia respiratoria.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-2">
           <Badge variant={mqttOnline ? "default" : "secondary"}>MQTT Frontend: {mqttOnline ? "Conectado" : "Desconectado"}</Badge>
           <Badge variant={status?.espOnline ? "default" : "secondary"}>ESP: {status?.espOnline ? "Online" : "Offline"}</Badge>
-          <Badge variant={status?.devicePowerOn ? "default" : "secondary"}>Sistema: {status?.devicePowerOn ? "Encendido" : "Apagado"}</Badge>
+          <Badge variant={flags.pressureState === "IDLE" ? "outline" : "default"}>Presion: {flags.pressureState}</Badge>
           <Badge variant={isStreaming ? "default" : "secondary"}>Datos clinicos: {isStreaming ? "Transmitiendo" : "En espera"}</Badge>
           <Badge variant={hasActiveSession ? "default" : "outline"}>Sesion: {hasActiveSession ? "Activa" : "Sin sesion activa"}</Badge>
           <Badge variant="outline">Paciente: {activePatientName}</Badge>
@@ -293,9 +327,10 @@ export default function MonitoringPage() {
                 </option>
               ))}
             </select>
-            <input className="rounded-md border px-3 py-2" placeholder="Peso antes" value={draft.weightBefore} onChange={(e) => setDraft((current) => ({ ...current, weightBefore: e.target.value }))} />
-            <input className="rounded-md border px-3 py-2" placeholder="Peso despues" value={draft.weightAfter} onChange={(e) => setDraft((current) => ({ ...current, weightAfter: e.target.value }))} />
-            <input className="rounded-md border px-3 py-2" placeholder="Peso seco" value={draft.dryWeight} onChange={(e) => setDraft((current) => ({ ...current, dryWeight: e.target.value }))} />
+            <input className="rounded-md border px-3 py-2" placeholder="Peso antes (kg)" value={draft.weightBefore} onChange={(e) => setDraft((current) => ({ ...current, weightBefore: e.target.value }))} />
+            <input className="rounded-md border px-3 py-2" placeholder="Peso final al cerrar (kg)" value={draft.weightAfter} onChange={(e) => setDraft((current) => ({ ...current, weightAfter: e.target.value }))} />
+            <input className="rounded-md border px-3 py-2" placeholder="Peso seco (kg)" value={draft.dryWeight} onChange={(e) => setDraft((current) => ({ ...current, dryWeight: e.target.value }))} />
+            <input className="rounded-md border px-3 py-2" type="number" min="1" max="240" placeholder="Intervalo PA (min)" value={draft.pressureIntervalMinutes} onChange={(e) => setDraft((current) => ({ ...current, pressureIntervalMinutes: e.target.value }))} />
             <input className="rounded-md border px-3 py-2 sm:col-span-2 xl:col-span-4" placeholder="Sintomas reportados" value={draft.reportedSymptoms} onChange={(e) => setDraft((current) => ({ ...current, reportedSymptoms: e.target.value }))} />
             <textarea className="min-h-24 rounded-md border px-3 py-2 sm:col-span-2 xl:col-span-4" placeholder="Observaciones del personal de salud" value={draft.staffObservations} onChange={(e) => setDraft((current) => ({ ...current, staffObservations: e.target.value }))} />
           </div>
@@ -324,6 +359,17 @@ export default function MonitoringPage() {
             <Button variant="outline" onClick={() => setPoints([])}>
               <RotateCcw className="mr-2 h-4 w-4" /> Reiniciar vista
             </Button>
+            <Button variant="outline" disabled={!hasActiveSession || !status?.espOnline || commandLoading !== null || flags.pressureState !== "IDLE"} onClick={() => void onCommand("inflate")}>
+              <Gauge className="mr-2 h-4 w-4" /> {commandLoading === "inflate" ? "Enviando..." : "Tomar presion"}
+            </Button>
+            <Button variant="outline" disabled={!hasActiveSession || !status?.espOnline || commandLoading !== null || !flags.warningActive} onClick={() => void onCommand("mute")}>
+              <BellOff className="mr-2 h-4 w-4" /> {commandLoading === "mute" ? "Enviando..." : "Silenciar alarma"}
+            </Button>
+          </div>
+          <div className="grid gap-2 text-sm sm:grid-cols-3">
+            <div className="rounded-md bg-muted/40 px-3 py-2">UF objetivo: {Number(draft.weightBefore) > 0 && Number(draft.dryWeight) > 0 ? `${Math.max(0, Number(draft.weightBefore) - Number(draft.dryWeight)).toFixed(2)} L` : "Pendiente"}</div>
+            <div className="rounded-md bg-muted/40 px-3 py-2">UF real: {Number(draft.weightBefore) > 0 && Number(draft.weightAfter) > 0 ? `${Math.max(0, Number(draft.weightBefore) - Number(draft.weightAfter)).toFixed(2)} L` : "Se calcula al cerrar"}</div>
+            <div className="rounded-md bg-muted/40 px-3 py-2">Ultima PA: {status?.activeSession?.lastPressureAt ? new Date(status.activeSession.lastPressureAt).toLocaleTimeString("es-ES") : "Sin medicion"}</div>
           </div>
         </CardContent>
       </Card>
@@ -334,19 +380,19 @@ export default function MonitoringPage() {
         <StatePill label="Sensor de dedo" ok={flags.fingerDetected} okText="Detectado" badText="No detectado" />
         <StatePill label="Respiracion" ok={!flags.respirationMissing} okText="Sin riesgo" badText="No detectada" />
         <StatePill label="ESP conectado" ok={Boolean(status?.espOnline)} okText="Online" badText="Offline" />
-        <StatePill label="Sistema" ok={Boolean(status?.devicePowerOn)} okText="Encendido" badText="Apagado" />
+        <StatePill label="Alarma sonora" ok={!flags.warningActive || flags.alarmMuted} okText={flags.alarmMuted ? "Silenciada" : "Sin alarma"} badText="Activa" />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
-        <ClinicalMetricCard title="Pulso" icon={<HeartPulse className="h-3.5 w-3.5" />} value={last?.pulse} unit="bpm" state={pulseState(last?.pulse)} hint="Frecuencia cardiaca actual" delay={0} />
-        <ClinicalMetricCard title="SpO2" icon={<Droplets className="h-3.5 w-3.5" />} value={last?.spo2} unit="%" state={spo2State(last?.spo2)} hint="Saturacion de oxigeno" delay={40} />
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <ClinicalMetricCard title="FC" icon={<HeartPulse className="h-3.5 w-3.5" />} value={last?.pulse} unit="bpm" state={pulseState(last?.pulse)} hint="Frecuencia cardiaca" delay={0} />
         <ClinicalMetricCard title="Temperatura" icon={<Thermometer className="h-3.5 w-3.5" />} value={last?.temperatureC} unit="C" state={tempState(last?.temperatureC)} hint="Temperatura corporal" delay={80} />
-        <ClinicalMetricCard title="Sistolica" icon={<Activity className="h-3.5 w-3.5" />} value={last?.systolic} unit="mmHg" state={systolicState(last?.systolic)} hint="Presion arterial sistolica" delay={120} />
-        <ClinicalMetricCard title="Diastolica" icon={<Activity className="h-3.5 w-3.5" />} value={last?.diastolic} unit="mmHg" state={diastolicState(last?.diastolic)} hint="Presion arterial diastolica" delay={160} />
+        <ClinicalMetricCard title="Frecuencia respiratoria" icon={<Waves className="h-3.5 w-3.5" />} value={last?.respiratoryRateBpm} unit="rpm" state={last?.respiratoryRateBpm && last.respiratoryRateBpm >= 12 && last.respiratoryRateBpm <= 20 ? "ok" : "warn"} hint="Respiraciones por minuto" delay={120} />
+        <Card><CardHeader><CardTitle className="text-sm">Presion arterial</CardTitle><CardDescription>Ultima toma valida</CardDescription></CardHeader><CardContent><div className="text-2xl font-semibold">{last?.systolic || last?.diastolic ? `${last.systolic.toFixed(0)}/${last.diastolic.toFixed(0)}` : "--/--"} <span className="text-xs text-muted-foreground">mmHg</span></div><div className="mt-2 text-xs text-muted-foreground">Manguito {flags.cuffPressureMmHg.toFixed(1)} mmHg</div></CardContent></Card>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2">
-        <ChartCard title="Pulso y SpO2" data={chartData} lines={[{ key: "pulse", color: "#0ea5e9" }, { key: "spo2", color: "#22c55e" }]} />
+        <ChartCard title="Frecuencia cardiaca" data={chartData} lines={[{ key: "pulse", color: "#0ea5e9" }]} />
+        <ChartCard title="Frecuencia respiratoria" data={chartData} lines={[{ key: "respiration", color: "#22c55e" }]} normalRange={{ from: 12, to: 20 }} />
         <ChartCard title="Temperatura" data={chartData} lines={[{ key: "temp", color: "#f97316" }]} normalRange={{ from: 36, to: 37.4 }} />
         <ChartCard title="Presion Sistolica" data={chartData} lines={[{ key: "sys", color: "#ef4444" }]} normalRange={{ from: 100, to: 130 }} />
         <ChartCard title="Presion Diastolica" data={chartData} lines={[{ key: "dia", color: "#a855f7" }]} normalRange={{ from: 60, to: 85 }} />
@@ -362,14 +408,34 @@ export default function MonitoringPage() {
             {points.slice(-20).reverse().map((point, index) => (
               <div key={`${point.ts}-${index}`} className="grid grid-cols-1 gap-2 rounded-md border bg-muted/20 px-3 py-2 text-xs sm:grid-cols-2 xl:grid-cols-6">
                 <span>{new Date(point.ts).toLocaleTimeString("es-ES")}</span>
-                <span>Pulso {point.pulse.toFixed(0)}</span>
-                <span>SpO2 {point.spo2.toFixed(0)}%</span>
+                <span>FC {point.pulse.toFixed(0)} bpm</span>
+                <span>FR {point.respiratoryRateBpm.toFixed(0)} rpm</span>
                 <span>Temp {point.temperatureC.toFixed(1)} C</span>
                 <span>SYS {point.systolic.toFixed(0)}</span>
                 <span>DIA {point.diastolic.toFixed(0)}</span>
               </div>
             ))}
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Eventos de la sesion</CardTitle>
+          <CardDescription>Tomas programadas o manuales, alarmas y cierre.</CardDescription>
+        </CardHeader>
+        <CardContent className="max-h-64 space-y-2 overflow-auto">
+          {(status?.activeSession?.events ?? []).length ? (
+            (status?.activeSession?.events ?? []).map((event) => (
+              <div key={event.id} className="grid gap-1 rounded-md border px-3 py-2 text-xs sm:grid-cols-[90px_110px_1fr]">
+                <span>{new Date(event.createdAt).toLocaleTimeString("es-ES")}</span>
+                <Badge variant="outline" className="w-fit">{event.source}</Badge>
+                <span>{event.description}</span>
+              </div>
+            ))
+          ) : (
+            <p className="text-sm text-muted-foreground">Aun no hay eventos registrados.</p>
+          )}
         </CardContent>
       </Card>
 
@@ -384,12 +450,13 @@ export default function MonitoringPage() {
               <div><strong>Fin:</strong> {previousSession.endedAt ? new Date(previousSession.endedAt).toLocaleString("es-ES") : "Sin cierre"}</div>
               <div><strong>Duracion:</strong> {previousSession.sessionDurationMinutes ?? "-"} min</div>
               <div><strong>Pesos:</strong> {previousSession.weightBefore ?? "-"} / {previousSession.weightAfter ?? "-"} / {previousSession.dryWeight ?? "-"}</div>
+              <div><strong>Ultrafiltracion objetivo / real:</strong> {previousSession.ultrafiltrationGoalLiters ?? "-"} / {previousSession.ultrafiltrationActualLiters ?? "-"} L</div>
               <div><strong>Sintomas:</strong> {previousSession.reportedSymptoms ?? "Sin dato"}</div>
               <div><strong>Observaciones:</strong> {previousSession.staffObservations ?? "Sin observaciones"}</div>
               <div>
                 <strong>Ultima lectura:</strong>{" "}
                 {previousSession.records?.at(-1)
-                  ? `Pulso ${previousSession.records.at(-1)?.pulse} | SpO2 ${previousSession.records.at(-1)?.oxygenSaturation} | Temp ${previousSession.records.at(-1)?.temperatureC} | PA ${previousSession.records.at(-1)?.systolic}/${previousSession.records.at(-1)?.diastolic}`
+                  ? `FC ${previousSession.records.at(-1)?.pulse} | FR ${previousSession.records.at(-1)?.respiratoryRateBpm} | Temp ${previousSession.records.at(-1)?.temperatureC} | PA ${previousSession.records.at(-1)?.systolic}/${previousSession.records.at(-1)?.diastolic}`
                   : "Sin lecturas"}
               </div>
             </div>

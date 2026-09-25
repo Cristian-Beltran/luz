@@ -5,6 +5,8 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Max,
+  Min,
 } from 'class-validator';
 
 export class CreateSessionDto {
@@ -22,11 +24,13 @@ export class CreateSessionDto {
 
   @IsOptional()
   @IsNumber()
-  weightAfter?: number;
+  dryWeight?: number;
 
   @IsOptional()
   @IsNumber()
-  dryWeight?: number;
+  @Min(1)
+  @Max(240)
+  pressureIntervalMinutes?: number;
 
   @IsOptional()
   @IsString()

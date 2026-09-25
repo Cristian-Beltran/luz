@@ -21,9 +21,6 @@ export class SessionData {
   @Column('int')
   pulse: number; // bpm
 
-  @Column('int')
-  oxygenSaturation: number; // % SpO2
-
   @Column('float')
   temperatureC: number; // °C
 
@@ -50,6 +47,9 @@ export class SessionData {
 
   @Column({ default: false })
   respirationMissing: boolean;
+
+  @Column('float', { default: 0 })
+  respiratoryRateBpm: number;
 
   @Column({ default: false })
   warningActive: boolean;

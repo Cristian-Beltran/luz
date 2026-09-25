@@ -7,13 +7,6 @@ export function pulseState(value?: number): ClinicalState {
   return "ok";
 }
 
-export function spo2State(value?: number): ClinicalState {
-  if (!Number.isFinite(value)) return "na";
-  if ((value as number) < 90) return "alert";
-  if ((value as number) < 95) return "warn";
-  return "ok";
-}
-
 export function tempState(value?: number): ClinicalState {
   if (!Number.isFinite(value)) return "na";
   if ((value as number) >= 38.5 || (value as number) < 35.5) return "alert";

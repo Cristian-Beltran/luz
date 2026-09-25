@@ -1,6 +1,6 @@
 {
-  "name": "Luz Monitor Hemodialisis",
-  "short_name": "Luz Monitor",
+  "name": "Prototipo de Monitor Multiparamétrico",
+  "short_name": "Monitor Clínico",
   "description": "Monitor publico de datos en tiempo real por MQTT.",
   "start_url": "/public/monitoring",
   "scope": "/",

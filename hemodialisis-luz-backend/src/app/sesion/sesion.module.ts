@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Session } from './entities/session.entity';
 import { SessionData } from './entities/session-data.entity';
 import { SessionAiMessage } from './entities/session-ai-message.entity';
+import { SessionEvent } from './entities/session-event.entity';
 import { Patient } from '../users/entities/patient.entity';
 import { User } from '../users/entities/user.entity';
 import { SessionService } from './services/session.service';
@@ -18,6 +19,7 @@ import { PdfModule } from 'src/context/pdf/pdf.module';
       Session,
       SessionData,
       SessionAiMessage,
+      SessionEvent,
       Patient,
       User,
     ]),

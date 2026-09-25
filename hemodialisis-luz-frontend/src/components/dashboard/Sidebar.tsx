@@ -98,9 +98,9 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
             </div>
             {showExpandedContent && (
               <div className="leading-tight">
-                <div className="text-sm font-semibold">Luz Clínica</div>
+                <div className="text-sm font-semibold">Monitor Multiparamétrico</div>
                 <div className="text-[11px] text-muted-foreground">
-                  Monitoreo hemodialítico
+                  Prototipo clínico
                 </div>
               </div>
             )}
