@@ -2,8 +2,7 @@
 #include <Wire.h>
 #include <math.h>
 #include <WiFi.h>
-#include <WiFiClientSecure.h>
-#include <MQTT.h>
+#include <PubSubClient.h>
 #include <Adafruit_MLX90614.h>
 #include <Q2HX711.h>
 
@@ -26,12 +25,6 @@
 //   GPIO35 -> ADC PPG/oximetro
 //   GPIO34 -> ADC MQ
 //
-// IMPORTANTE:
-// GPIO36 en ESP32 es SOLO ENTRADA.
-// Por eso queda como feedback/sensor opcional de la valvula.
-// Para controlar la valvula se usa GPIO32.
-// ============================================================
-
 
 // ========================= PINOUT =========================
 constexpr uint8_t PRESSURE_CLK_PIN    = 17;
@@ -54,8 +47,8 @@ constexpr uint8_t BUZZER_PIN          = 33;
 constexpr uint8_t PPG_ADC_PIN         = 35;
 constexpr uint8_t MQ_ADC_PIN          = 34;
 
-constexpr uint8_t VALVE_FEEDBACK_PIN  = 36;  // SOLO ENTRADA
-constexpr uint8_t AIR_VALVE_PIN       = 32;  // SALIDA real para valvula
+constexpr uint8_t VALVE_FEEDBACK_PIN  = 36;  
+constexpr uint8_t AIR_VALVE_PIN       = 32;  
 
 
 // ========================= NIVELES ACTIVOS =========================
@@ -70,12 +63,14 @@ constexpr bool FAN_RELAY_ACTIVE_LOW = true;
 // ========================= WIFI / MQTT =========================
 // WiFi ES OPCIONAL.
 // Si WIFI_SSID queda vacio, todo funciona por Serial y localmente.
-const char* WIFI_SSID = "iPhone de Mar";
-const char* WIFI_PASSWORD = "1234marsucha";
+//const char* WIFI_SSID = "iPhone de Mar";
+//const char* WIFI_PASSWORD = "1234marsucha";
+const char* WIFI_SSID = "Cordova hogar ext";
+const char* WIFI_PASSWORD = "4ndiNicol3";
 
 
 const char* MQTT_HOST = "server-local.tail9af6ac.ts.net";
-constexpr uint16_t MQTT_PORT = 443;
+constexpr uint16_t MQTT_PORT = 1883;
 const char* MQTT_USER = "device";
 const char* MQTT_PASS = "esp32";
 constexpr uint16_t MQTT_BUFFER_SIZE = 2048;
@@ -83,8 +78,8 @@ const char* DEVICE_ID = "esp32-luz-01";
 
 constexpr bool MQTT_SIMULATE_MISSING_VALUES = false;
 
-WiFiClientSecure wifiClient;
-MQTTClient mqttClient(MQTT_BUFFER_SIZE);
+WiFiClient wifiClient;
+PubSubClient mqttClient(wifiClient);
 
 
 // ========================= SENSORES =========================
@@ -336,7 +331,7 @@ bool alarmMuted();
 void ensureWifi();
 void ensureMqtt();
 
-void mqttMessageHandler(String& topic, String& payload);
+void mqttCallback(char* topic, byte* payload, unsigned int length);
 void publishTelemetry();
 void publishRawTelemetry();
 float sanitizeMqttNumber(float value, float fallback);
@@ -413,9 +408,9 @@ void setup() {
   ppgCalibrationStartMs = millis();
 
   // ---------------- MQTT ----------------
-  wifiClient.setInsecure();
-  mqttClient.begin(MQTT_HOST, MQTT_PORT, true, wifiClient);
-  mqttClient.onMessage(mqttMessageHandler);
+  mqttClient.setServer(MQTT_HOST, MQTT_PORT);
+  mqttClient.setCallback(mqttCallback);
+  mqttClient.setBufferSize(MQTT_BUFFER_SIZE);
 
   // WiFi no bloqueante
   ensureWifi();
@@ -1406,7 +1401,7 @@ void ensureMqtt() {
   Serial.print(MQTT_HOST);
   Serial.print(":");
   Serial.print(MQTT_PORT);
-  Serial.println(" (WSS)...");
+  Serial.println("...");
 
   if (mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASS)) {
 
@@ -1420,26 +1415,29 @@ void ensureMqtt() {
     Serial.println("[MQTT] Conectado.");
   } else {
     Serial.print("[MQTT] Error de conexion, estado: ");
-    Serial.println(mqttClient.lastError());
+    Serial.println(mqttClient.state());
   }
 }
 
 
 // ============================================================
-// MQTT MESSAGE HANDLER
+// MQTT CALLBACK
 // ============================================================
-void mqttMessageHandler(String& topic, String& payload) {
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
   String expectedTopic =
     String("luz/device/") +
     DEVICE_ID +
     "/control";
 
-  if (topic != expectedTopic) {
+  if (String(topic) != expectedTopic) {
     return;
   }
 
-  String message = payload;
+  String message;
+  for (unsigned int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
   message.toLowerCase();
 
   const char* source = "mqtt";
