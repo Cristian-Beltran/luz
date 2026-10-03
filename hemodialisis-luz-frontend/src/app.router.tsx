@@ -7,6 +7,7 @@ import PatientRegisterPage from "./pages/patient-register";
 import NotFoundPage from "./pages/not-found";
 import MonitoringPage from "./modules/Monitoring/monitoring";
 import PublicMonitoringPage from "./modules/Monitoring/public-monitoring";
+import TelemetryPage from "./modules/Telemetry/telemetry";
 import DoctorsPage from "./modules/Doctors/doctors";
 import { AuthProvider } from "./auth/ProtectedRoute";
 import PatientPage from "./modules/Patient/patient";
@@ -27,6 +28,8 @@ export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
   { path: "/register/patient", element: <PatientRegisterPage /> },
   { path: "/public/monitoring", element: <PublicMonitoringPage /> },
+  { path: "/telemetry", element: <TelemetryPage /> },
+  { path: "/public/telemetry", element: <Navigate to="/telemetry" replace /> },
   {
     path: "/",
     element: (

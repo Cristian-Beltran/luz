@@ -119,7 +119,8 @@ export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
       authStrategy: new LocalAuth({ clientId: 'luz-doctor' }),
       puppeteer: {
         headless: true,
-        executablePath: '/usr/bin/google-chrome-stable',
+        executablePath:
+          process.env.CHROME_EXECUTABLE_PATH ?? '/usr/bin/chromium',
         args: ['--no-sandbox', '--disable-setuid-sandbox'],
       },
     });

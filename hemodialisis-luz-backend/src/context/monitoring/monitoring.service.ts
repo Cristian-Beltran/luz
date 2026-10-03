@@ -8,10 +8,14 @@ import { SessionAiMessage } from 'src/app/sesion/entities/session-ai-message.ent
 type TelemetryPayload = {
   deviceId?: string;
   heartRateBpm?: number;
+  oxygenSaturationPercent?: number;
+  spo2Available?: boolean;
+  ppgSignalQualityPercent?: number;
   temperatureC?: number;
   ambientTemperatureC?: number;
   estimatedSystolicMmHg?: number;
   estimatedDiastolicMmHg?: number;
+  estimatedMapMmHg?: number;
   fingerDetected?: boolean;
   monitoringEnabled?: boolean;
   calibrationComplete?: boolean;
@@ -58,6 +62,7 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
   private lastAlarmMuteSequenceByDevice = new Map<string, number>();
   private lastAlarmActiveByDevice = new Map<string, boolean>();
   private devicePowerByDevice = new Map<string, boolean>();
+  private processingTelemetryByDevice = new Set<string>();
   private lastTelemetry: (TelemetryPayload & { deviceId: string; receivedAt: string }) | null =
     null;
 
@@ -116,35 +121,45 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
         receivedAt: this.lastSeenAt.toISOString(),
       };
 
-      const session = await this.sessionService.findActiveByDevice(deviceId);
-      if (!session) return;
+      if (this.processingTelemetryByDevice.has(deviceId)) return;
+      this.processingTelemetryByDevice.add(deviceId);
 
-      await this.captureDeviceEvents(deviceId, session, sanitizedPayload);
+      try {
+        const session = await this.sessionService.findActiveByDevice(deviceId);
+        if (!session) return;
 
-      const now = Date.now();
-      const lastPersistAt = this.lastPersistAtBySession.get(session.id) ?? 0;
-      if (now - lastPersistAt < this.persistIntervalMs) {
-        return;
+        await this.captureDeviceEvents(deviceId, session, sanitizedPayload);
+
+        const now = Date.now();
+        const lastPersistAt = this.lastPersistAtBySession.get(session.id) ?? 0;
+        if (now - lastPersistAt < this.persistIntervalMs) {
+          return;
+        }
+        this.lastPersistAtBySession.set(session.id, now);
+
+        await this.sessionService.addSessionDataFromTelemetry(session, {
+          pulse: this.clamp(sanitizedPayload.heartRateBpm, 20, 250, 0),
+          temperatureC: this.clamp(sanitizedPayload.temperatureC, 30, 45, 0),
+          systolic: this.clampMeasurement(sanitizedPayload.estimatedSystolicMmHg, 50, 260),
+          diastolic: this.clampMeasurement(sanitizedPayload.estimatedDiastolicMmHg, 30, 200),
+          ambientTemperatureC: sanitizedPayload.ambientTemperatureC,
+          fingerDetected: Boolean(sanitizedPayload.fingerDetected),
+          monitoringEnabled: Boolean(sanitizedPayload.monitoringEnabled),
+          calibrationComplete: Boolean(sanitizedPayload.calibrationComplete),
+          respirationDetected: Boolean(sanitizedPayload.respirationDetected),
+          respirationMissing: Boolean(sanitizedPayload.respirationMissing),
+          respiratoryRateBpm: this.clamp(sanitizedPayload.respiratoryRateBpm, 0, 80, 0),
+          warningActive: Boolean(sanitizedPayload.warningActive),
+          alertActive: Boolean(sanitizedPayload.alertActive),
+        });
+
+        void this.generateAiInsightIfNeeded(deviceId, session.id, sanitizedPayload);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'unknown error';
+        this.logger.error(`Telemetry processing failed: ${message}`);
+      } finally {
+        this.processingTelemetryByDevice.delete(deviceId);
       }
-      this.lastPersistAtBySession.set(session.id, now);
-
-      await this.sessionService.addSessionDataFromTelemetry(session, {
-        pulse: this.clamp(sanitizedPayload.heartRateBpm, 20, 250, 0),
-        temperatureC: this.clamp(sanitizedPayload.temperatureC, 30, 45, 0),
-        systolic: this.clampMeasurement(sanitizedPayload.estimatedSystolicMmHg, 50, 260),
-        diastolic: this.clampMeasurement(sanitizedPayload.estimatedDiastolicMmHg, 30, 200),
-        ambientTemperatureC: sanitizedPayload.ambientTemperatureC,
-        fingerDetected: Boolean(sanitizedPayload.fingerDetected),
-        monitoringEnabled: Boolean(sanitizedPayload.monitoringEnabled),
-        calibrationComplete: Boolean(sanitizedPayload.calibrationComplete),
-        respirationDetected: Boolean(sanitizedPayload.respirationDetected),
-        respirationMissing: Boolean(sanitizedPayload.respirationMissing),
-        respiratoryRateBpm: this.clamp(sanitizedPayload.respiratoryRateBpm, 0, 80, 0),
-        warningActive: Boolean(sanitizedPayload.warningActive),
-        alertActive: Boolean(sanitizedPayload.alertActive),
-      });
-
-      void this.generateAiInsightIfNeeded(deviceId, session.id, sanitizedPayload);
     });
 
     this.client.on('error', (err) => {
@@ -268,12 +283,15 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
   async publishCurrentEvents(deviceId: string): Promise<boolean> {
     if (!this.client?.connected) return false;
     const session = await this.sessionService.findActiveByDevice(deviceId);
+    const events = session
+      ? await this.sessionService.getEvents(session.id, 30)
+      : [];
     this.client.publish(
       `luz/device/${deviceId}/events`,
       JSON.stringify({
         deviceId,
         sessionId: session?.id ?? null,
-        events: (session?.events ?? []).slice(0, 30).map((event) => ({
+        events: events.map((event) => ({
           id: event.id,
           type: event.type,
           source: event.source,
@@ -330,10 +348,13 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
     return {
       ...payload,
       heartRateBpm: this.toFiniteNumber(payload.heartRateBpm),
+      oxygenSaturationPercent: this.toFiniteNumber(payload.oxygenSaturationPercent),
+      ppgSignalQualityPercent: this.toFiniteNumber(payload.ppgSignalQualityPercent),
       temperatureC: this.toFiniteNumber(payload.temperatureC),
       ambientTemperatureC: this.toFiniteNumber(payload.ambientTemperatureC),
       estimatedSystolicMmHg: this.toFiniteNumber(payload.estimatedSystolicMmHg),
       estimatedDiastolicMmHg: this.toFiniteNumber(payload.estimatedDiastolicMmHg),
+      estimatedMapMmHg: this.toFiniteNumber(payload.estimatedMapMmHg),
       respiratoryRateBpm: this.toFiniteNumber(payload.respiratoryRateBpm),
       cuffPressureMmHg: this.toFiniteNumber(payload.cuffPressureMmHg),
       pressureMeasurementSequence: this.toFiniteNumber(payload.pressureMeasurementSequence),

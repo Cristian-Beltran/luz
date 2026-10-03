@@ -9,6 +9,7 @@ import {
 } from 'typeorm';
 import { UserType } from '../enums/user-type';
 import { Status } from '../../../context/shared/models/active.model';
+import { Exclude } from 'class-transformer';
 
 @Entity('users')
 export class User {
@@ -22,6 +23,7 @@ export class User {
   email: string;
 
   @Column()
+  @Exclude()
   password: string;
 
   @Column({ nullable: true })

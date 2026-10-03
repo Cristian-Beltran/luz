@@ -82,7 +82,6 @@ export class SessionService {
   async findActiveSession(): Promise<Session | null> {
     return this.sessionRepo.findOne({
       where: { endedAt: null },
-      relations: ['patient', 'records', 'aiMessages', 'events'],
       order: { startedAt: 'DESC' },
     });
   }
@@ -90,13 +89,8 @@ export class SessionService {
   async findActiveByDevice(deviceId: string): Promise<Session | null> {
     return this.sessionRepo.findOne({
       where: { deviceId, endedAt: null },
-      relations: ['patient', 'records', 'aiMessages', 'events'],
-      order: {
-        startedAt: 'DESC',
-        records: { recordedAt: 'ASC' },
-        aiMessages: { createdAt: 'DESC' },
-        events: { createdAt: 'DESC' },
-      },
+      relations: ['patient', 'patient.user'],
+      order: { startedAt: 'DESC' },
     });
   }
 
@@ -245,6 +239,14 @@ export class SessionService {
     });
   }
 
+  async getEvents(sessionId: string, limit = 30): Promise<SessionEvent[]> {
+    return this.eventRepo.find({
+      where: { session: { id: sessionId } },
+      order: { createdAt: 'DESC' },
+      take: limit,
+    });
+  }
+
   async findByPatient(patientId: string): Promise<Session[]> {
     const patientExists = await this.patientRepo.exist({
       where: { id: patientId },
@@ -306,7 +308,7 @@ export class SessionService {
         },
       }));
 
-    const latestRecord = latestSession?.records?.at(-1) ?? null;
+    const latestRecord = latestSession?.records?.[0] ?? null;
 
     return {
       patient,

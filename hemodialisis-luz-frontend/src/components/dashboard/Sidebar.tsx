@@ -8,6 +8,7 @@ import {
   UsersRound,
   User,
   Wifi,
+  Activity,
   LogOut,
   Sun,
   Moon,
@@ -30,6 +31,7 @@ const NAV_DOCTOR = [
   { name: "Doctores", href: "/doctor", icon: UsersRound },
   { name: "Pacientes", href: "/patients", icon: User },
   { name: "Monitoreo en vivo", href: "/monitoring", icon: Wifi },
+  { name: "Telemetría pública", href: "/telemetry", icon: Activity },
 ];
 
 const NAV_PATIENT = [
