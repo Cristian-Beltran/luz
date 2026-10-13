@@ -38,8 +38,10 @@ export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
     private readonly sessionReportService: SessionReportService,
   ) {}
 
-  async onModuleInit() {
-    await this.initializeClient();
+  onModuleInit() {
+    // El arranque de Chromium/WhatsApp puede tardar varios minutos. No debe
+    // impedir que la API de pacientes comience a aceptar solicitudes.
+    void this.initializeClient();
   }
 
   async onModuleDestroy() {
