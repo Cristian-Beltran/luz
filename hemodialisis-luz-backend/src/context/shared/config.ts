@@ -15,7 +15,6 @@ export default registerAs('config', () => {
     whatsAppDefaultCountryCode:
       process.env.WHATSAPP_DEFAULT_COUNTRY_CODE ?? '57',
     mqtt: {
-      enabled: process.env.MQTT_ENABLED !== 'false',
       url: process.env.MQTT_URL ?? 'mqtt://broker.hivemq.com:1883',
       user: process.env.MQTT_USER ?? '',
       password: process.env.MQTT_PASSWORD ?? '',

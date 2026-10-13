@@ -1,7 +1,7 @@
 // src/app/user/services/patient.service.ts
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Not, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Patient } from '../entities/patient.entity';
 import { CreatePatientDto } from '../dtos/patient.dto';
 import { UserBaseService } from './users.service';
@@ -61,10 +61,11 @@ export class PatientService {
   }
 
   async findAll(): Promise<Patient[]> {
-    return this.patientRepository.find({
-      relations: ['user'],
-      where: { user: { status: Not(Status.DELETED) } },
-    });
+    return this.patientRepository
+      .createQueryBuilder('patient')
+      .innerJoinAndSelect('patient.user', 'user')
+      .where('user.status != :deletedStatus', { deletedStatus: Status.DELETED })
+      .getMany();
   }
 
   async findOne(id: string): Promise<Patient> {

@@ -74,11 +74,6 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit() {
-    if (this.configService.get<boolean>('config.mqtt.enabled') === false) {
-      this.logger.warn('MQTT monitoring disabled by configuration');
-      return;
-    }
-
     const mqttUrl = this.configService.get<string>('config.mqtt.url') ?? 'mqtt://broker.hivemq.com:1883';
     const mqttUser = this.configService.get<string>('config.mqtt.user') ?? '';
     const mqttPassword = this.configService.get<string>('config.mqtt.password') ?? '';
