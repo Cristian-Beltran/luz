@@ -1,4 +1,0 @@
-[build]
-  base = "hemodialisis-luz-patient-app"
-  command = "npm run build"
-  publish = "dist"
