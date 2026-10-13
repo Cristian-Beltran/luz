@@ -1,19 +1,4 @@
-import {
-  Injectable,
-  Logger,
-  OnModuleDestroy,
-  OnModuleInit,
-} from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import * as QRCode from 'qrcode';
-import {
-  Client,
-  LocalAuth,
-  MessageMedia,
-  type ClientInfo,
-} from 'whatsapp-web.js';
-import { SessionService } from 'src/app/sesion/services/session.service';
-import { SessionReportService } from 'src/app/sesion/services/session-report.service';
+import { Injectable, Logger } from '@nestjs/common';
 
 type WhatsAppStatus =
   | 'initializing'
@@ -23,193 +8,26 @@ type WhatsAppStatus =
   | 'error';
 
 @Injectable()
-export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
+export class WhatsAppService {
   private readonly logger = new Logger(WhatsAppService.name);
-  private client: Client | null = null;
-  private status: WhatsAppStatus = 'initializing';
-  private qrDataUrl: string | null = null;
-  private lastError: string | null = null;
-  private currentUser: string | null = null;
-  private started = false;
-
-  constructor(
-    private readonly configService: ConfigService,
-    private readonly sessionService: SessionService,
-    private readonly sessionReportService: SessionReportService,
-  ) {}
-
-  onModuleInit() {
-    // WhatsApp Web lanza Chromium y puede agotar la CPU de este servidor.
-    // Se inicia explícitamente desde el panel cuando se necesite enviar reportes.
-    this.status = 'disconnected';
-  }
-
-  async onModuleDestroy() {
-    await this.client?.destroy();
-  }
+  private readonly status: WhatsAppStatus = 'disconnected';
 
   getStatus() {
     return {
       status: this.status,
-      qrDataUrl: this.qrDataUrl,
-      currentUser: this.currentUser,
-      lastError: this.lastError,
-      ready: this.status === 'connected',
+      qrDataUrl: null,
+      currentUser: null,
+      lastError: 'WhatsApp deshabilitado temporalmente para proteger el servidor.',
+      ready: false,
     };
   }
 
   async restart() {
-    this.status = 'initializing';
-    this.qrDataUrl = null;
-    this.lastError = null;
-    this.currentUser = null;
-
-    if (this.client) {
-      await this.client.destroy();
-      this.client = null;
-    }
-
-    this.started = false;
-    await this.initializeClient();
+    this.logger.warn('WhatsApp esta deshabilitado temporalmente');
   }
 
-  async sendSessionReport(sessionId: string): Promise<boolean> {
-    try {
-      if (this.status !== 'connected' || !this.client) {
-        this.logger.warn('WhatsApp no conectado, no se envio reporte');
-        return false;
-      }
-
-      const session = await this.sessionService.findOneDetailed(sessionId);
-      if (!session) {
-        this.logger.warn(`Sesion ${sessionId} no encontrada para envio`);
-        return false;
-      }
-      if (session.reportSentAt) {
-        this.logger.log(`El reporte de sesion ${sessionId} ya fue enviado`);
-        return true;
-      }
-
-      const contacts = (session.patient.contacts ?? [])
-        .filter((contact) => contact.receivesReport)
-        .map((contact) => ({ phone: contact.phone, name: contact.name }));
-      if (!contacts.length) {
-        contacts.push({ phone: session.patient.referencePhone, name: session.patient.referenceName });
-      }
-      const recipients = contacts
-        .map((contact) => ({ ...contact, normalized: this.normalizePhone(contact.phone) }))
-        .filter((contact): contact is { phone: string; name: string; normalized: string } => Boolean(contact.normalized))
-        .filter((contact, index, all) => all.findIndex((candidate) => candidate.normalized === contact.normalized) === index);
-      if (!recipients.length) {
-        this.logger.warn(`No hay contactos validos para reporte de sesion ${sessionId}`);
-        return false;
-      }
-
-      const report = await this.sessionReportService.generateSessionReport(session.id);
-      const media = new MessageMedia(
-        'application/pdf',
-        report.buffer.toString('base64'),
-        report.fileName,
-      );
-
-      let delivered = 0;
-      for (const recipient of recipients) {
-        try {
-          await this.client.sendMessage(recipient.normalized, media, {
-            sendMediaAsDocument: true,
-            caption: `Reporte clinico de la sesion de ${session.patient.user.fullname}`,
-          });
-          delivered += 1;
-          await this.sessionService.addEvent(session.id, 'report_sent', 'whatsapp', `Reporte enviado a ${recipient.name || recipient.phone}`);
-        } catch (sendError) {
-          const message = sendError instanceof Error ? sendError.message : 'unknown error';
-          await this.sessionService.addEvent(session.id, 'report_failed', 'whatsapp', `No se pudo enviar a ${recipient.name || recipient.phone}`, { error: message });
-          this.logger.error(`No se pudo enviar reporte ${sessionId} a ${recipient.normalized}: ${message}`);
-        }
-      }
-      this.logger.log(`Reporte de sesion enviado a ${delivered}/${recipients.length} contactos`);
-      if (delivered > 0) {
-        await this.sessionService.markReportSent(session.id);
-      }
-      return delivered > 0;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'unknown error';
-      this.logger.error(`No se pudo enviar reporte de sesion ${sessionId}: ${message}`);
-      return false;
-    }
-  }
-
-  private async initializeClient() {
-    if (this.started) return;
-    this.started = true;
-
-    const client = new Client({
-      authStrategy: new LocalAuth({ clientId: 'luz-doctor' }),
-      puppeteer: {
-        headless: true,
-        executablePath:
-          process.env.CHROME_EXECUTABLE_PATH ?? '/usr/bin/chromium',
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
-      },
-    });
-
-    client.on('qr', async (qr) => {
-      this.status = 'waiting_qr';
-      this.qrDataUrl = await QRCode.toDataURL(qr);
-      this.logger.log('WhatsApp QR generado');
-    });
-
-    client.on('ready', () => {
-      this.status = 'connected';
-      this.qrDataUrl = null;
-      this.lastError = null;
-      this.currentUser = this.extractUserId(client.info);
-      this.logger.log('WhatsApp conectado');
-    });
-
-    client.on('authenticated', () => {
-      this.status = 'initializing';
-      this.lastError = null;
-      this.logger.log('WhatsApp autenticado');
-    });
-
-    client.on('auth_failure', (message) => {
-      this.status = 'error';
-      this.lastError = message;
-      this.logger.error(`WhatsApp auth failure: ${message}`);
-    });
-
-    client.on('disconnected', (reason) => {
-      this.status = 'disconnected';
-      this.currentUser = null;
-      this.lastError = String(reason);
-      this.logger.warn(`WhatsApp desconectado: ${reason}`);
-    });
-
-    this.client = client;
-
-    try {
-      await client.initialize();
-    } catch (error) {
-      this.status = 'error';
-      this.lastError = error instanceof Error ? error.message : 'unknown error';
-      this.logger.error(`No se pudo inicializar WhatsApp: ${this.lastError}`);
-    }
-  }
-
-  private extractUserId(info?: ClientInfo | null): string | null {
-    const raw = info?.wid?._serialized;
-    return typeof raw === 'string' ? raw : null;
-  }
-
-  private normalizePhone(phone: string | undefined): string | null {
-    if (!phone) return null;
-    const digits = phone.replace(/\D/g, '');
-    if (!digits) return null;
-
-    const defaultCountryCode =
-      this.configService.get<string>('config.whatsAppDefaultCountryCode') ?? '57';
-    const normalized = digits.length <= 10 ? `${defaultCountryCode}${digits}` : digits;
-    return `${normalized}@c.us`;
+  async sendSessionReport(_sessionId: string): Promise<boolean> {
+    this.logger.warn('Reporte por WhatsApp omitido: integracion deshabilitada');
+    return false;
   }
 }
