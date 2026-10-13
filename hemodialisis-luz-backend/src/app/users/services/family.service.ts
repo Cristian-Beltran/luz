@@ -27,7 +27,7 @@ export class FamilyMemberService {
       fullname: dto.fullname,
       email: dto.email,
       password: dto.password,
-      type: UserType.PATIENT,
+      type: UserType.FAMILY,
       address: dto.address,
       status: Status.ACTIVE,
     });
@@ -55,6 +55,15 @@ export class FamilyMemberService {
       relations: ['user', 'patients'],
     });
     if (!family) throw new NotFoundException(`FamilyMember ${id} not found`);
+    return family;
+  }
+
+  async findByUserId(userId: string): Promise<FamilyMember> {
+    const family = await this.familyMemberRepository.findOne({
+      where: { user: { id: userId } },
+      relations: ['user', 'patients', 'patients.user'],
+    });
+    if (!family) throw new NotFoundException('Family profile not found');
     return family;
   }
 

@@ -29,6 +29,9 @@ export class Session {
   @Column({ type: 'datetime', nullable: true })
   endedAt?: Date;
 
+  @Column({ type: 'datetime', nullable: true })
+  reportSentAt?: Date;
+
   @Column('float', { nullable: true })
   weightBefore?: number;
 

@@ -9,6 +9,8 @@ export default registerAs('config', () => {
     },
     apiKey: process.env.API_KEY ?? 'local-api-key',
     jwtSecret: process.env.JWT_SECRET ?? 'local-dev-jwt-secret',
+    patientDefaultPassword:
+      process.env.PATIENT_DEFAULT_PASSWORD ?? 'Cambiar123!',
     openAiApiKey: process.env.OPENAI_API_KEY ?? '',
     whatsAppDefaultCountryCode:
       process.env.WHATSAPP_DEFAULT_COUNTRY_CODE ?? '57',

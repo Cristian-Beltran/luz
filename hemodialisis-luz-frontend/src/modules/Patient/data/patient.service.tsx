@@ -4,12 +4,12 @@ import type { Status } from "@/types/status.interface";
 
 const BASE_URL = "/patients";
 export const patientService = {
-  register: async (data: CreatePatient): Promise<Patient> => {
-    const res = await axios.post(`${BASE_URL}/register`, data);
-    return res.data;
-  },
   create: async (data: CreatePatient): Promise<Patient> => {
     const res = await axios.post(BASE_URL, data);
+    return res.data;
+  },
+  resetPassword: async (id: string): Promise<{ message: string }> => {
+    const res = await axios.post(`${BASE_URL}/${id}/reset-password`);
     return res.data;
   },
   findAll: async (): Promise<Patient[]> => {

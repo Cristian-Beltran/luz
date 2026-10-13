@@ -13,6 +13,8 @@ import {
   UseGuards,
   UsePipes,
   ValidationPipe,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { UserType } from 'src/app/users/enums/user-type';
@@ -25,6 +27,7 @@ import { SessionService } from '../services/session.service';
 import { CreateSessionDto } from '../dtos/create-session.dto';
 import { CreateSessionDataDto } from '../dtos/create-session-data.dto';
 import { SessionReportService } from '../services/session-report.service';
+import { WhatsAppService } from 'src/context/whatsapp/whatsapp.service';
 
 @Controller('sessions')
 @UseGuards(JwtAuthGuard)
@@ -33,6 +36,8 @@ export class SessionController {
   constructor(
     private readonly sessionService: SessionService,
     private readonly sessionReportService: SessionReportService,
+    @Inject(forwardRef(() => WhatsAppService))
+    private readonly whatsAppService: WhatsAppService,
   ) {}
 
   // POST /sessions  -> crea una sesión
@@ -51,11 +56,13 @@ export class SessionController {
   }
 
   @Patch(':id/close')
-  closeSession(
+  async closeSession(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() body: { weightAfter?: number },
   ) {
-    return this.sessionService.closeSession(id, body.weightAfter);
+    const session = await this.sessionService.closeSession(id, body.weightAfter);
+    void this.whatsAppService.sendSessionReport(session.id);
+    return session;
   }
 
   @Get(':id/report')

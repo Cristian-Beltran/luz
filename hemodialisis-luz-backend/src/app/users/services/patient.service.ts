@@ -5,6 +5,7 @@ import { Not, Repository } from 'typeorm';
 import { Patient } from '../entities/patient.entity';
 import { CreatePatientDto } from '../dtos/patient.dto';
 import { UserBaseService } from './users.service';
+import { ConfigService } from '@nestjs/config';
 import { UserType } from '../enums/user-type';
 import { Status } from '../../../context/shared/models/active.model';
 
@@ -14,6 +15,7 @@ export class PatientService {
     @InjectRepository(Patient)
     private readonly patientRepository: Repository<Patient>,
     private readonly userBaseService: UserBaseService,
+    private readonly configService: ConfigService,
   ) {}
 
   async create(dto: CreatePatientDto): Promise<Patient> {
@@ -23,11 +25,11 @@ export class PatientService {
     const user = await this.userBaseService.createUser({
       fullname: dto.fullname,
       email: dto.email,
-      password: dto.password,
+      password: this.configService.get<string>('config.patientDefaultPassword'),
       address: dto.address,
       type: UserType.PATIENT,
       status: Status.ACTIVE,
-    });
+    }, { mustChangePassword: true });
     const patient = this.patientRepository.create({
       user,
       referenceName: dto.referenceName,
@@ -35,6 +37,9 @@ export class PatientService {
       sex: dto.sex,
       patientType: dto.patientType,
       referencePhone: dto.referencePhone,
+      dialysisDays: dto.dialysisDays,
+      dialysisStartTime: dto.dialysisStartTime,
+      sessionDurationMinutes: dto.sessionDurationMinutes ?? 240,
       baseDisease: dto.baseDisease,
       knownAllergies: dto.knownAllergies,
       hasDiabetes: dto.hasDiabetes,
@@ -44,6 +49,15 @@ export class PatientService {
       hasPreviousInfections: dto.hasPreviousInfections,
     });
     return this.patientRepository.save(patient);
+  }
+
+  async resetPassword(id: string) {
+    const patient = await this.findOne(id);
+    await this.userBaseService.resetPassword(
+      patient.user.id,
+      this.configService.get<string>('config.patientDefaultPassword')!,
+    );
+    return { message: 'Password reset. The patient must change it at next login.' };
   }
 
   async findAll(): Promise<Patient[]> {
@@ -76,6 +90,10 @@ export class PatientService {
       sex: dto.sex ?? patient.sex,
       patientType: dto.patientType ?? patient.patientType,
       referencePhone: dto.referencePhone ?? patient.referencePhone,
+      dialysisDays: dto.dialysisDays ?? patient.dialysisDays,
+      dialysisStartTime: dto.dialysisStartTime ?? patient.dialysisStartTime,
+      sessionDurationMinutes:
+        dto.sessionDurationMinutes ?? patient.sessionDurationMinutes,
       baseDisease: dto.baseDisease ?? patient.baseDisease,
       knownAllergies: dto.knownAllergies ?? patient.knownAllergies,
       hasDiabetes: dto.hasDiabetes ?? patient.hasDiabetes,

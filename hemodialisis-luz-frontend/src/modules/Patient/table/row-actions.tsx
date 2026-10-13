@@ -15,6 +15,7 @@ import {
 import type { Patient } from "../patient.interface";
 import { userPatientStore } from "../data/patient.store";
 import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 
 interface Props {
   item: Patient;
@@ -42,6 +43,17 @@ export const PatientRowActions = ({ item, onEditUser }: Props) => {
     changeStatus(item.user.id, status === "ACTIVE" ? "INACTIVE" : "ACTIVE");
   };
 
+  const handleResetPassword = async () => {
+    if (!window.confirm(`¿Restablecer la contraseña de ${item.user.fullname}? Deberá cambiarla al ingresar.`)) return;
+    try {
+      const { patientService } = await import("../data/patient.service");
+      const result = await patientService.resetPassword(item.user.id);
+      toast.success(result.message);
+    } catch {
+      toast.error("No se pudo restablecer la contraseña");
+    }
+  };
+
   return (
     <>
       <DropdownMenu>
@@ -59,6 +71,9 @@ export const PatientRowActions = ({ item, onEditUser }: Props) => {
           </DropdownMenuItem>
           <DropdownMenuItem onClick={handleUpdate}>
             <Pen /> Editar
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handleResetPassword}>
+            <RefreshCwIcon /> Restablecer contraseña
           </DropdownMenuItem>
           <DropdownMenuItem onClick={handleHistory}>
             <View /> Ver historial

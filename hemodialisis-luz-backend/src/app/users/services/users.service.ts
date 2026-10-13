@@ -18,12 +18,28 @@ export class UserBaseService {
     private readonly userRepository: Repository<User>,
   ) {}
 
-  async createUser(dto: CreateUserBaseDto): Promise<User> {
+  async createUser(dto: CreateUserBaseDto, options?: { mustChangePassword?: boolean }): Promise<User> {
     const userRepeatEmail = await this.findByEmail(dto.email);
     if (userRepeatEmail) throw new BadRequestException('Email already exists');
     const user = this.userRepository.create(dto);
+    if (!dto.password) throw new BadRequestException('Password is required');
     const passwordHash = await bcrypt.hash(dto.password.replace(/-/g, ''), 10);
     user.password = passwordHash;
+    user.mustChangePassword = Boolean(options?.mustChangePassword);
+    return this.userRepository.save(user);
+  }
+
+  async resetPassword(id: string, password: string): Promise<User> {
+    const user = await this.findById(id);
+    user.password = await bcrypt.hash(password.replace(/-/g, ''), 10);
+    user.mustChangePassword = true;
+    return this.userRepository.save(user);
+  }
+
+  async changePassword(id: string, password: string): Promise<User> {
+    const user = await this.findById(id);
+    user.password = await bcrypt.hash(password.replace(/-/g, ''), 10);
+    user.mustChangePassword = false;
     return this.userRepository.save(user);
   }
 
@@ -40,9 +56,11 @@ export class UserBaseService {
   }
 
   async updateUser(id: string, dto: Partial<CreateUserBaseDto>): Promise<User> {
-    const userRepeatEmail = await this.findByEmail(dto.email);
-    if (userRepeatEmail && userRepeatEmail.id !== id)
-      throw new BadRequestException('Email already exists');
+    if (dto.email) {
+      const userRepeatEmail = await this.findByEmail(dto.email);
+      if (userRepeatEmail && userRepeatEmail.id !== id)
+        throw new BadRequestException('Email already exists');
+    }
     const user = await this.findById(id);
     Object.assign(user, dto);
     return this.userRepository.save(user);

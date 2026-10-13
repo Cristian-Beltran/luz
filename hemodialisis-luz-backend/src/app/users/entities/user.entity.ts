@@ -26,6 +26,9 @@ export class User {
   @Exclude()
   password: string;
 
+  @Column({ default: false })
+  mustChangePassword: boolean;
+
   @Column({ nullable: true })
   address?: string;
 

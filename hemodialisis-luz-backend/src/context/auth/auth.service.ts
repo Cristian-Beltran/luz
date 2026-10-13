@@ -38,6 +38,25 @@ export class AuthService {
     };
   }
 
+  async loginPatient(loginDto: LoginDto) {
+    const { user } = await this.login(loginDto);
+    if (user.type !== UserType.PATIENT) {
+      throw new UnauthorizedException('This access is only available to patients');
+    }
+    return {
+      ...(await this.generateJWT(user)),
+      mustChangePassword: user.mustChangePassword,
+    };
+  }
+
+  async loginFamily(loginDto: LoginDto) {
+    const { user } = await this.login(loginDto);
+    if (user.type !== UserType.FAMILY) {
+      throw new UnauthorizedException('This access is only available to family members');
+    }
+    return this.generateJWT(user);
+  }
+
   async validateUserJwt(id: string) {
     const user = await this.userRepository.findOne({
       where: { id, status: Status.ACTIVE },

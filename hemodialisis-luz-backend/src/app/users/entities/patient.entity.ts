@@ -34,6 +34,33 @@ export class Patient {
   @Column()
   referencePhone: string;
 
+  @Column({ type: 'simple-json', nullable: true })
+  dialysisDays?: number[];
+
+  @Column({ nullable: true })
+  dialysisStartTime?: string;
+
+  @Column('int', { default: 240 })
+  sessionDurationMinutes: number;
+
+  @Column({ type: 'simple-json', nullable: true })
+  contacts?: Array<{
+    id: string;
+    name: string;
+    relationship: string;
+    phone: string;
+    receivesReport: boolean;
+  }>;
+
+  @Column({ type: 'simple-json', nullable: true })
+  preferences?: { fontSize?: 'sm' | 'md' | 'lg' };
+
+  @Column({ nullable: true })
+  familyInviteCode?: string;
+
+  @Column({ type: 'datetime', nullable: true })
+  familyInviteExpiresAt?: Date;
+
   @Column({ type: 'text', nullable: true })
   baseDisease?: string;
 

@@ -14,9 +14,9 @@ import { PayloadToken } from '../models/token.model';
 export class UserTypeGuard implements CanActivate {
   constructor(private reflector: Reflector) {}
   canActivate(context: ExecutionContext): boolean {
-    const allowedTypes = this.reflector.get<UserType[]>(
+    const allowedTypes = this.reflector.getAllAndOverride<UserType[]>(
       UserTypes,
-      context.getHandler(),
+      [context.getHandler(), context.getClass()],
     );
     if (!allowedTypes) return true;
     const request = context.switchToHttp().getRequest();

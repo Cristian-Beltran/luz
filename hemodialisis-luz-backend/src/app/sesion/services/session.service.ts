@@ -178,6 +178,10 @@ export class SessionService {
     return saved;
   }
 
+  async markReportSent(sessionId: string): Promise<void> {
+    await this.sessionRepo.update(sessionId, { reportSentAt: new Date() });
+  }
+
   async addEvent(
     sessionId: string,
     type: string,

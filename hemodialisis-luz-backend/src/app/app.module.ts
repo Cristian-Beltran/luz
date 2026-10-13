@@ -10,6 +10,7 @@ import { MonitoringModule } from 'src/context/monitoring/monitoring.module';
 import { WhatsAppModule } from 'src/context/whatsapp/whatsapp.module';
 import { UsersModule } from './users/user.module';
 import { SessionModule } from './sesion/sesion.module';
+import { PatientAppModule } from './patient-app/patient-app.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { SessionModule } from './sesion/sesion.module';
     LoggerModule,
     AuthModule,
     SessionModule,
+    PatientAppModule,
     MonitoringModule,
     WhatsAppModule,
   ],

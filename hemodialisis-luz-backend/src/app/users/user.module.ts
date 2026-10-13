@@ -11,6 +11,7 @@ import { PatientService } from './services/patient.service';
 import { Doctor } from './entities/doctor.entity';
 import { FamilyMember } from './entities/family.entity';
 import { Patient } from './entities/patient.entity';
+import { UserTypeGuard } from 'src/context/shared/guards/type-user.guard';
 
 @Module({
   imports: [TypeOrmModule.forFeature([User, Doctor, FamilyMember, Patient])],
@@ -20,6 +21,7 @@ import { Patient } from './entities/patient.entity';
     FamilyMemberService,
     DoctorService,
     PatientService,
+    UserTypeGuard,
   ],
   exports: [
     UserBaseService,

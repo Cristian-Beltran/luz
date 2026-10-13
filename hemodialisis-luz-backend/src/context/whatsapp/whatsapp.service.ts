@@ -83,10 +83,23 @@ export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(`Sesion ${sessionId} no encontrada para envio`);
         return false;
       }
+      if (session.reportSentAt) {
+        this.logger.log(`El reporte de sesion ${sessionId} ya fue enviado`);
+        return true;
+      }
 
-      const phone = this.normalizePhone(session.patient.referencePhone);
-      if (!phone) {
-        this.logger.warn(`Telefono de referencia invalido para sesion ${sessionId}`);
+      const contacts = (session.patient.contacts ?? [])
+        .filter((contact) => contact.receivesReport)
+        .map((contact) => ({ phone: contact.phone, name: contact.name }));
+      if (!contacts.length) {
+        contacts.push({ phone: session.patient.referencePhone, name: session.patient.referenceName });
+      }
+      const recipients = contacts
+        .map((contact) => ({ ...contact, normalized: this.normalizePhone(contact.phone) }))
+        .filter((contact): contact is { phone: string; name: string; normalized: string } => Boolean(contact.normalized))
+        .filter((contact, index, all) => all.findIndex((candidate) => candidate.normalized === contact.normalized) === index);
+      if (!recipients.length) {
+        this.logger.warn(`No hay contactos validos para reporte de sesion ${sessionId}`);
         return false;
       }
 
@@ -97,13 +110,26 @@ export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
         report.fileName,
       );
 
-      await this.client.sendMessage(phone, media, {
-        sendMediaAsDocument: true,
-        caption: `Reporte clinico de la sesion de ${session.patient.user.fullname}`,
-      });
-
-      this.logger.log(`Reporte de sesion enviado por WhatsApp a ${phone}`);
-      return true;
+      let delivered = 0;
+      for (const recipient of recipients) {
+        try {
+          await this.client.sendMessage(recipient.normalized, media, {
+            sendMediaAsDocument: true,
+            caption: `Reporte clinico de la sesion de ${session.patient.user.fullname}`,
+          });
+          delivered += 1;
+          await this.sessionService.addEvent(session.id, 'report_sent', 'whatsapp', `Reporte enviado a ${recipient.name || recipient.phone}`);
+        } catch (sendError) {
+          const message = sendError instanceof Error ? sendError.message : 'unknown error';
+          await this.sessionService.addEvent(session.id, 'report_failed', 'whatsapp', `No se pudo enviar a ${recipient.name || recipient.phone}`, { error: message });
+          this.logger.error(`No se pudo enviar reporte ${sessionId} a ${recipient.normalized}: ${message}`);
+        }
+      }
+      this.logger.log(`Reporte de sesion enviado a ${delivered}/${recipients.length} contactos`);
+      if (delivered > 0) {
+        await this.sessionService.markReportSent(session.id);
+      }
+      return delivered > 0;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'unknown error';
       this.logger.error(`No se pudo enviar reporte de sesion ${sessionId}: ${message}`);

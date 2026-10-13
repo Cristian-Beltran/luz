@@ -34,13 +34,16 @@ export default function PatientFormModal({ isOpen, onClose, user }: Props) {
   const patientSchema = z.object({
     fullname: z.string().min(2, "Nombre requerido"),
     email: z.string().email("Correo requerido"),
-    password: user ? z.string().optional() : z.string().min(6, "Contraseña requerida"),
+    password: z.string().optional(),
     address: z.string().optional(),
     referenceName: z.string().min(2, "Nombre de referencia requerido"),
     age: z.coerce.number().min(0, "Edad inválida").max(120, "Edad inválida"),
     sex: z.enum(["masculino", "femenino", "otro"]),
     patientType: z.enum(["nino", "adulto", "adulto_mayor"]),
     referencePhone: z.string().min(7, "Telefono requerido"),
+    dialysisDays: z.array(z.number()).min(1, "Selecciona al menos un día"),
+    dialysisStartTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Hora inválida").optional().or(z.literal("")),
+    sessionDurationMinutes: z.coerce.number().min(30).max(600),
     baseDisease: z.string().optional(),
     knownAllergies: z.string().optional(),
     hasDiabetes: z.boolean(),
@@ -65,6 +68,9 @@ export default function PatientFormModal({ isOpen, onClose, user }: Props) {
       sex: "masculino",
       patientType: "adulto",
       referencePhone: "",
+      dialysisDays: [1, 3, 5],
+      dialysisStartTime: "07:00",
+      sessionDurationMinutes: 240,
       baseDisease: "",
       knownAllergies: "",
       hasDiabetes: false,
@@ -87,6 +93,9 @@ export default function PatientFormModal({ isOpen, onClose, user }: Props) {
         sex: user.sex,
         patientType: user.patientType,
         referencePhone: user.referencePhone,
+        dialysisDays: user.dialysisDays || [1, 3, 5],
+        dialysisStartTime: user.dialysisStartTime || "07:00",
+        sessionDurationMinutes: user.sessionDurationMinutes || 240,
         baseDisease: user.baseDisease || "",
         knownAllergies: user.knownAllergies || "",
         hasDiabetes: user.hasDiabetes,
@@ -108,6 +117,9 @@ export default function PatientFormModal({ isOpen, onClose, user }: Props) {
       sex: "masculino",
       patientType: "adulto",
       referencePhone: "",
+      dialysisDays: [1, 3, 5],
+      dialysisStartTime: "07:00",
+      sessionDurationMinutes: 240,
       baseDisease: "",
       knownAllergies: "",
       hasDiabetes: false,
@@ -153,11 +165,15 @@ export default function PatientFormModal({ isOpen, onClose, user }: Props) {
               <TextField control={form.control} name="fullname" label="Nombre del paciente" />
               <TextField control={form.control} name="email" label="Correo electronico" type="email" />
               {!user ? (
-                <TextField control={form.control} name="password" label="Contraseña" type="password" />
+                <p className="rounded-md border border-primary/20 bg-primary/5 p-3 text-sm text-muted-foreground md:col-span-2">
+                  Se asignará la contraseña temporal configurada para pacientes. El paciente deberá cambiarla al ingresar a la app.
+                </p>
               ) : null}
               <TextField control={form.control} name="address" label="Direccion" />
               <TextField control={form.control} name="referenceName" label="Persona de referencia" />
               <TextField control={form.control} name="referencePhone" label="Numero de referencia" />
+              <TextField control={form.control} name="dialysisStartTime" label="Hora de diálisis" type="time" />
+              <TextField control={form.control} name="sessionDurationMinutes" label="Duración (minutos)" type="number" />
               <TextField control={form.control} name="age" label="Edad" type="number" />
               <SelectField
                 control={form.control}
@@ -182,6 +198,7 @@ export default function PatientFormModal({ isOpen, onClose, user }: Props) {
               <TextField control={form.control} name="baseDisease" label="Enfermedad de base" />
               <TextField control={form.control} name="knownAllergies" label="Alergias conocidas" />
             </div>
+            <DialysisDaysField control={form.control} />
 
             <div className="space-y-3">
               <p className="text-sm font-medium">Antecedentes importantes</p>
@@ -297,5 +314,25 @@ function CheckboxField({
         </FormItem>
       )}
     />
+  );
+}
+
+function DialysisDaysField({ control }: { control: any }) {
+  const days = [
+    [1, "Lun"], [2, "Mar"], [3, "Mié"], [4, "Jue"], [5, "Vie"], [6, "Sáb"], [0, "Dom"],
+  ] as const;
+  return (
+    <FormField control={control} name="dialysisDays" render={({ field }) => (
+      <FormItem>
+        <FormLabel>Días de diálisis</FormLabel>
+        <div className="flex flex-wrap gap-2">
+          {days.map(([value, label]) => {
+            const selected = (field.value || []).includes(value);
+            return <Button key={value} type="button" variant={selected ? "default" : "outline"} size="sm" onClick={() => field.onChange(selected ? field.value.filter((day: number) => day !== value) : [...field.value, value])}>{label}</Button>;
+          })}
+        </div>
+        <FormMessage />
+      </FormItem>
+    )} />
   );
 }

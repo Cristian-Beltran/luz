@@ -1,10 +1,13 @@
 // src/app/user/dto/create-patient.dto.ts
 import {
   IsBoolean,
+  IsArray,
+  ArrayMinSize,
   IsIn,
   IsInt,
   IsOptional,
   IsString,
+  Matches,
   Max,
   Min,
 } from 'class-validator';
@@ -29,6 +32,21 @@ export class CreatePatientDto extends CreateUserBaseDto {
 
   @IsString()
   referencePhone: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  dialysisDays?: number[];
+
+  @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/)
+  dialysisStartTime?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(30)
+  @Max(600)
+  sessionDurationMinutes?: number;
 
   @IsOptional()
   @IsString()

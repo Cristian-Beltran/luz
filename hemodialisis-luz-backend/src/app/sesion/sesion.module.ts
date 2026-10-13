@@ -1,5 +1,5 @@
 // src/app/session/session.module.ts
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Session } from './entities/session.entity';
 import { SessionData } from './entities/session-data.entity';
@@ -11,10 +11,12 @@ import { SessionService } from './services/session.service';
 import { SessionController } from './api/session.controller';
 import { SessionReportService } from './services/session-report.service';
 import { PdfModule } from 'src/context/pdf/pdf.module';
+import { WhatsAppModule } from 'src/context/whatsapp/whatsapp.module';
 
 @Module({
   imports: [
     PdfModule,
+    forwardRef(() => WhatsAppModule),
     TypeOrmModule.forFeature([
       Session,
       SessionData,

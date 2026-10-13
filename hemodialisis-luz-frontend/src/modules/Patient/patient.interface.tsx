@@ -8,6 +8,9 @@ export interface Patient {
   sex: "masculino" | "femenino" | "otro";
   patientType: "nino" | "adulto" | "adulto_mayor";
   referencePhone: string;
+  dialysisDays?: number[];
+  dialysisStartTime?: string;
+  sessionDurationMinutes?: number;
   baseDisease?: string;
   knownAllergies?: string;
   hasDiabetes: boolean;
@@ -27,6 +30,9 @@ export interface CreatePatient {
   sex: "masculino" | "femenino" | "otro";
   patientType: "nino" | "adulto" | "adulto_mayor";
   referencePhone: string;
+  dialysisDays?: number[];
+  dialysisStartTime?: string;
+  sessionDurationMinutes?: number;
   baseDisease?: string;
   knownAllergies?: string;
   hasDiabetes: boolean;

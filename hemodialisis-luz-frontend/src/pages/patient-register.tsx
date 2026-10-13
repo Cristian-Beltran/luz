@@ -7,7 +7,6 @@ import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { patientService } from "@/modules/Patient/data/patient.service";
 
 const registerSchema = z.object({
   fullname: z.string().min(2, "Nombre requerido"),
@@ -54,14 +53,9 @@ export default function PatientRegisterPage() {
     },
   });
 
-  const onSubmit = async (values: RegisterValues) => {
-    try {
-      await patientService.register(values);
-      toast.success("Cuenta creada. Ahora puedes iniciar sesion.");
-      navigate("/login");
-    } catch {
-      toast.error("No se pudo crear la cuenta");
-    }
+  const onSubmit = async (_values: RegisterValues) => {
+    toast.error("Las cuentas de pacientes solo pueden ser creadas por el personal clínico.");
+    navigate("/login");
   };
 
   return (
