@@ -47,6 +47,7 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(MonitoringService.name);
   private client: MqttClient | null = null;
   private readonly persistIntervalMs = 10_000;
+  private readonly telemetryProcessingIntervalMs = 1_000;
   private readonly espTimeoutMs = 15_000;
   private readonly aiIntervalMs = 60_000;
   private readonly aiRateLimitCooldownMs = 15 * 60_000;
@@ -63,6 +64,7 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
   private lastAlarmActiveByDevice = new Map<string, boolean>();
   private devicePowerByDevice = new Map<string, boolean>();
   private processingTelemetryByDevice = new Set<string>();
+  private lastTelemetryProcessingAtByDevice = new Map<string, number>();
   private lastTelemetry: (TelemetryPayload & { deviceId: string; receivedAt: string }) | null =
     null;
 
@@ -121,7 +123,15 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
         receivedAt: this.lastSeenAt.toISOString(),
       };
 
+      // The ESP32 publishes telemetry multiple times per second. Keep the
+      // latest live payload, but avoid a SQLite lookup for every packet.
+      const now = Date.now();
+      const lastProcessedAt =
+        this.lastTelemetryProcessingAtByDevice.get(deviceId) ?? 0;
+      if (now - lastProcessedAt < this.telemetryProcessingIntervalMs) return;
       if (this.processingTelemetryByDevice.has(deviceId)) return;
+
+      this.lastTelemetryProcessingAtByDevice.set(deviceId, now);
       this.processingTelemetryByDevice.add(deviceId);
 
       try {
@@ -130,7 +140,6 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
 
         await this.captureDeviceEvents(deviceId, session, sanitizedPayload);
 
-        const now = Date.now();
         const lastPersistAt = this.lastPersistAtBySession.get(session.id) ?? 0;
         if (now - lastPersistAt < this.persistIntervalMs) {
           return;
