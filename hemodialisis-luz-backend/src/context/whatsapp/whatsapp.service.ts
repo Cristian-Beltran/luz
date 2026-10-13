@@ -39,9 +39,9 @@ export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit() {
-    // El arranque de Chromium/WhatsApp puede tardar varios minutos. No debe
-    // impedir que la API de pacientes comience a aceptar solicitudes.
-    void this.initializeClient();
+    // WhatsApp Web lanza Chromium y puede agotar la CPU de este servidor.
+    // Se inicia explícitamente desde el panel cuando se necesite enviar reportes.
+    this.status = 'disconnected';
   }
 
   async onModuleDestroy() {
