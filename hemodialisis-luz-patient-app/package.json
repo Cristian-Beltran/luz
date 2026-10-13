@@ -2,5 +2,9 @@
   "name": "luz-patient-app",
   "private": true,
   "version": "1.0.0",
-  "scripts": { "dev": "npx serve .", "start": "npx serve ." }
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "npx serve .",
+    "start": "npx serve dist"
+  }
 }

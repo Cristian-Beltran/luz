@@ -29,6 +29,9 @@ hemodialisis-luz-backend/data/*.db
 hemodialisis-luz-frontend/dist/
 hemodialisis-luz-frontend/.vite/
 
+# Patient PWA
+hemodialisis-luz-patient-app/dist/
+
 # Tooling caches
 .eslintcache
 *.tsbuildinfo
