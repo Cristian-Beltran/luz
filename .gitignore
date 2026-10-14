@@ -14,6 +14,8 @@ pnpm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .weebjs*
+hemodialisis-luz-backend/.wwebjs_auth/
+backups/
 
 # Node
 node_modules/
