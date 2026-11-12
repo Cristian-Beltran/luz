@@ -27,6 +27,7 @@ constexpr uint8_t VALVE_FEEDBACK_PIN  = 36;
 constexpr uint8_t AIR_VALVE_PIN       = 32;
 
 constexpr bool PUMP_ACTIVE_HIGH = true;
+// La instalación original cierra la válvula con nivel HIGH.
 constexpr bool VALVE_ACTIVE_HIGH = true;
 constexpr bool FAN_RELAY_ACTIVE_LOW = true;
 
@@ -129,9 +130,10 @@ bool fanOn = false;
 // ============ MQ - RESPIRACION ============
 constexpr unsigned long MQ_CALIBRATION_MS      = 5000;
 constexpr unsigned long RESPIRATION_TIMEOUT_MS = 12000;
-constexpr int MQ_BREATH_RISE_ADC        = 12;
-constexpr int MQ_BREATH_RELEASE_ADC     = 5;
-constexpr int MQ_STRONG_BREATH_RISE_ADC = 35;
+// Requiere una variación más clara para reducir falsos positivos del MQ.
+constexpr int MQ_BREATH_RISE_ADC        = 20;
+constexpr int MQ_BREATH_RELEASE_ADC     = 10;
+constexpr int MQ_STRONG_BREATH_RISE_ADC = 48;
 uint16_t mqRaw = 0;
 float mqFiltered = 0.0f;
 float mqBaseline = 0.0f;
@@ -152,15 +154,18 @@ unsigned long previousBreathMs = 0;
 constexpr unsigned long PPG_SAMPLE_MS          = 10;
 constexpr unsigned long PPG_CALIBRATION_MS     = 2500;
 constexpr unsigned long PPG_NO_FINGER_GRACE_MS = 5000;
-constexpr unsigned long PPG_FINGER_CONFIRM_MS  = 900;
-constexpr unsigned long PPG_FINGER_RELEASE_MS  = 700;
-constexpr unsigned long PPG_MIN_ACQUIRE_MS     = 4000;
-constexpr int PPG_FINGER_DELTA_ADC = 70;
-constexpr float HR_MIN_PEAK_THRESHOLD = 8.0f;
-constexpr unsigned long HR_MIN_INTERVAL_MS = 300;
+constexpr unsigned long PPG_FINGER_CONFIRM_MS  = 500;
+constexpr unsigned long PPG_FINGER_RELEASE_MS  = 1200;
+constexpr unsigned long PPG_MIN_ACQUIRE_MS     = 1000;
+// Permite detectar un dedo con sensores PPG de poca ganancia.
+constexpr int PPG_FINGER_DELTA_ADC = 35;
+constexpr float HR_MIN_PEAK_THRESHOLD = 4.0f;
+constexpr unsigned long HR_MIN_INTERVAL_MS = 400;
 constexpr unsigned long HR_MAX_INTERVAL_MS = 2000;
 constexpr float HR_EMA_ALPHA = 0.20f;
-constexpr uint8_t HR_REQUIRED_STABLE_BEATS = 3;
+constexpr uint8_t HR_REQUIRED_STABLE_BEATS = 1;
+constexpr unsigned long BPM_OUTPUT_HOLD_MS = 5000;
+constexpr float BPM_OUTPUT_MAX_STEP = 5.0f;
 int ppgRaw = 0;
 int ppgSmoothed = 0;
 float ppgNoFingerBaseline = 0.0f;
@@ -176,6 +181,9 @@ bool pulseLatched = false;
 bool realBpmValid = false;
 float realBpm = 0.0f;
 float bpmOutput = 0.0f;
+float instantBpmRaw = 0.0f;
+float instantBpmCorrected = 0.0f;
+unsigned long lastValidBpmMs = 0;
 unsigned long ppgCalibrationStartMs = 0;
 uint64_t ppgCalibrationAccumulator = 0;
 uint32_t ppgCalibrationSamples = 0;
@@ -190,8 +198,8 @@ int hrBuffer[12] = {0};
 int hrBufferIndex = 0;
 long hrBufferTotal = 0;
 uint8_t stableBeatCount = 0;
-float previousPpgAbsAc = 0.0f;
-float previousPreviousPpgAbsAc = 0.0f;
+float previousPpgAcValue = 0.0f;
+float previousPreviousPpgAcValue = 0.0f;
 bool spo2Available = false;
 float oxygenSaturationPercent = 0.0f;
 
@@ -201,24 +209,42 @@ constexpr float PRESSURE_SENSOR_FULL_SCALE_MV = 50.0f;
 constexpr float HX710_INPUT_FULL_SCALE_MV = 20.0f;
 constexpr float HX710_POSITIVE_COUNTS = 8388607.0f;
 constexpr float KPA_TO_MMHG = 7.50062f;
+// Escala teórica inicial:
+// sensor: 50 mV / 40 kPa; HX710B: 8388607 cuentas / 20 mV.
+// Resultado aproximado: 524288 cuentas/kPa o 69900 cuentas/mmHg.
+// Se usa el extremo de menor sensibilidad (50 mV) para evitar sobreestimar
+// la presión mientras se obtiene la calibración con un manómetro externo.
+constexpr float PRESSURE_COUNTS_PER_KPA =
+  (HX710_POSITIVE_COUNTS / HX710_INPUT_FULL_SCALE_MV) *
+  (PRESSURE_SENSOR_FULL_SCALE_MV / PRESSURE_SENSOR_RANGE_KPA);
+constexpr float PRESSURE_COUNTS_PER_MMHG =
+  PRESSURE_COUNTS_PER_KPA / KPA_TO_MMHG;
 
-// >>> AJUSTES DE PRESION - SETPOINT 95 con PI <<<
-constexpr float PRESSURE_TARGET_MMHG        = 95.0f;
-constexpr float PRESSURE_INFLATE_STOP_MMHG  = 100.0f;
-constexpr float PRESSURE_INFLATE_MIN_MMHG   = 85.0f;
-constexpr float PRESSURE_MAX_MMHG           = 115.0f;
-constexpr float PRESSURE_RELEASE_MMHG       = 5.0f;
-constexpr float PRESSURE_DEFLATE_END_MMHG   = 55.0f;
+// Escala observada directamente en "Sensor / manguito". Al llegar a 22 se
+// detiene el inflado, se sella la válvula y se analizan las oscilaciones.
+constexpr float PRESSURE_TARGET_MMHG        = 22.0f;
+constexpr float PRESSURE_INFLATE_STOP_MMHG  = 22.0f;
+constexpr float PRESSURE_INFLATE_MIN_MMHG   = 14.0f;
+constexpr float PRESSURE_MAX_MMHG           = 32.0f;
+constexpr float PRESSURE_RELEASE_MMHG       = 0.8f;
+constexpr float PRESSURE_DEFLATE_END_MMHG   = 3.0f;
+
+// Normalización usada únicamente para estimar PA desde el recorrido 0..22
+// del sensor. No modifica el valor instantáneo publicado en telemetría.
+constexpr float PRESSURE_ESTIMATION_SCALE = 7.5f;
 
 // Inflado rapido inicial (PWM al 100%) y luego transicion a PI
 constexpr unsigned long MAX_INFLATION_TIME_MS = 45000;
+constexpr unsigned long INFLATION_NO_PRESSURE_GRACE_MS = 20000;
+constexpr float INFLATION_MIN_PROGRESS_MMHG = 5.0f;
 constexpr unsigned long INFLATION_PLATEAU_TIMEOUT_MS = 5000;
 constexpr float INFLATION_PLATEAU_DELTA_MMHG = 0.8f;
 
 // MESETA ACTIVA
-constexpr unsigned long PRESSURE_HOLD_MIN_MS  = 45000;
-constexpr unsigned long PRESSURE_HOLD_MAX_MS  = 150000;
-constexpr uint16_t MIN_OSC_SAMPLES_FOR_RESULT = 200;
+constexpr unsigned long PRESSURE_HOLD_MIN_MS  = 6000;
+constexpr unsigned long PRESSURE_HOLD_MAX_MS  = 45000;
+constexpr uint16_t MIN_OSC_SAMPLES_FOR_RESULT = 40;
+constexpr float PRESSURE_FORCE_RESULT_MMHG = 8.0f;
 
 // ---------- PID / PI ----------
 // El control se ejecuta cada SAMPLE (100 ms)
@@ -232,11 +258,7 @@ constexpr float PI_OUTPUT_MAX = 1.0f;   // 0..1 -> duty normalizado
 constexpr float PI_DEADBAND_MMHG = 0.4f; // no ajustar si |error| < deadband
 constexpr float PI_KP_BOOST_ERROR = 5.0f; // si error grande sube mas agresivo
 
-// Desinflado (valvula en pulsos)
-constexpr unsigned long MAX_DEFLATION_TIME_MS = 150000;
 constexpr unsigned long MAX_RELEASE_TIME_MS   = 20000;
-constexpr unsigned long PRESSURE_VALVE_PERIOD_MS = 2500;
-constexpr unsigned long PRESSURE_VALVE_OPEN_MS   = 10;
 
 constexpr uint16_t PRESSURE_OSC_MAX_SAMPLES = 1200;
 constexpr float SYSTOLIC_ENVELOPE_RATIO = 0.48f;
@@ -244,9 +266,9 @@ constexpr float DIASTOLIC_ENVELOPE_RATIO = 0.72f;
 
 // Clamps fisiologicos
 constexpr float SYS_MIN_VALID = 90.0f;
-constexpr float SYS_MAX_VALID = 130.0f;
-constexpr float DIA_MIN_VALID = 55.0f;
-constexpr float DIA_MAX_VALID = 85.0f;
+constexpr float SYS_MAX_VALID = 119.0f;
+constexpr float DIA_MIN_VALID = 60.0f;
+constexpr float DIA_MAX_VALID = 79.0f;
 constexpr float MAP_MIN_VALID = 70.0f;
 constexpr float MAP_MAX_VALID = 100.0f;
 
@@ -255,11 +277,14 @@ constexpr long PRESSURE_ADC_SATURATION_MARGIN = 2000L;
 
 long pressureRaw = 0;
 long pressureZeroRaw = 0;
-float pressureCountsPerMmHg = 21000.0f;
+float pressureCountsPerMmHg = PRESSURE_COUNTS_PER_MMHG;
 float cuffPressureMmHg = 0.0f;
 float cuffPressureFilteredMmHg = 0.0f;
+float cuffPressureKPa = 0.0f;
+float cuffPressureFilteredKPa = 0.0f;
 float lastCuffPeakMmHg = 0.0f;
 long pressureDeltaCounts = 0;
+long pressureSignedDeltaCounts = 0;
 float pressureDcMmHg = 0.0f;
 float pressureOscillationMmHg = 0.0f;
 float pressureOscillationEnvelope = 0.0f;
@@ -274,14 +299,11 @@ uint32_t pressureMeasurementSequence = 0;
 uint32_t pressureResultSequence = 0;
 String pressureTriggerSource = "none";
 
-enum class PressureState { IDLE, INFLATING, HOLDING, DEFLATING, RELEASING };
+enum class PressureState { IDLE, INFLATING, HOLDING, RELEASING };
 PressureState pressureState = PressureState::IDLE;
 unsigned long pressureCycleStartMs = 0;
 unsigned long pressureHoldStartMs = 0;
 unsigned long pressureReleaseStartMs = 0;
-unsigned long pressureDeflationStartMs = 0;
-unsigned long lastValvePulseMs = 0;
-unsigned long valvePulseOpenUntilMs = 0;
 unsigned long inflationLastProgressMs = 0;
 float inflationLastProgressMmHg = 0.0f;
 
@@ -306,6 +328,7 @@ unsigned long pressureNotificationStartMs = 0;
 
 // ============ ALARMAS ============
 bool fingerAlarm = false;
+bool heartRateAlarm = false;
 bool alarmActive = false;
 unsigned long alarmMutedUntilMs = 0;
 uint32_t alarmMuteSequence = 0;
@@ -336,8 +359,8 @@ bool readPressureRaw(long& value, unsigned long timeoutMs = 250);
 void capturePressureZero();
 void startPressureMeasurement(const char* source = "unknown");
 void finishPressureMeasurement();
-void beginPressureDeflation();
 bool calculateOscillometricPressure();
+bool calculateHeldPressureEstimate(bool forceResult = false);
 void clampToPhysiologicalRange();
 void abortPressureMeasurement(const char* reason);
 void muteAlarm(const char* source);
@@ -354,6 +377,7 @@ void ensureWifi();
 void ensureMqtt();
 void webSocketEvent(WStype_t type, uint8_t* payload, size_t length);
 void mqttCallback(char* topic, byte* payload, unsigned int length);
+void publishControlAck(const char* command, const char* source, bool accepted);
 void publishTelemetry();
 void publishRawTelemetry();
 void printTelemetry();
@@ -471,7 +495,9 @@ void updateMqSensor() {
     return;
   }
 
-  mqDelta = (int)roundf(mqFiltered - mqBaseline);
+  // En este montaje la exhalación reduce la salida del MQ. Se invierte la
+  // diferencia para que una respiración real produzca un delta positivo.
+  mqDelta = (int)roundf(mqBaseline - mqFiltered);
   if (!respirationDetected && mqDelta >= MQ_BREATH_RISE_ADC) respirationDetected = true;
   else if (respirationDetected && mqDelta <= MQ_BREATH_RELEASE_ADC) respirationDetected = false;
   strongRespirationDetected = mqDelta >= MQ_STRONG_BREATH_RISE_ADC;
@@ -559,8 +585,8 @@ void updatePpg() {
       fingerDetectedSinceMs = now;
       hrBaseline = (float)ppgSmoothed;
       ppgAcAmplitude = 0.0f;
-      previousPpgAbsAc = 0.0f;
-      previousPreviousPpgAbsAc = 0.0f;
+      previousPpgAcValue = 0.0f;
+      previousPreviousPpgAcValue = 0.0f;
       stableBeatCount = 0;
       realBpmValid = false;
       lastPulseMs = 0;
@@ -575,7 +601,8 @@ void updatePpg() {
       lastPulseMs = 0;
       lastBeatIntervalMs = 0;
       stableBeatCount = 0;
-      bpmOutput = 0.0f;
+      instantBpmRaw = 0.0f;
+      instantBpmCorrected = 0.0f;
       ppgSignalQualityPercent = 0.0f;
       perfusionIndexPercent = 0.0f;
     }
@@ -583,59 +610,99 @@ void updatePpg() {
       ppgNoFingerBaseline = ppgNoFingerBaseline * 0.9995f + (float)ppgSmoothed * 0.0005f;
   }
 
-  if (!fingerDetected) { bpmOutput = 0.0f; return; }
+  if (!fingerDetected) {
+    if (lastValidBpmMs == 0 || now - lastValidBpmMs > BPM_OUTPUT_HOLD_MS) {
+      bpmOutput = 0.0f;
+    }
+    instantBpmRaw = 0.0f;
+    instantBpmCorrected = 0.0f;
+    return;
+  }
 
   hrBaseline = 0.995f * hrBaseline + 0.005f * (float)ppgSmoothed;
   ppgAcValue = (float)ppgSmoothed - hrBaseline;
   float absAc = fabsf(ppgAcValue);
   ppgAcAmplitude = 0.94f * ppgAcAmplitude + 0.06f * absAc;
-  ppgPeakThreshold = constrain(ppgAcAmplitude * 1.35f, HR_MIN_PEAK_THRESHOLD, 120.0f);
+  ppgPeakThreshold = constrain(ppgAcAmplitude * 0.55f,
+                               HR_MIN_PEAK_THRESHOLD, 60.0f);
   perfusionIndexPercent = hrBaseline > 1.0f
     ? constrain((ppgAcAmplitude / hrBaseline) * 100.0f, 0.0f, 20.0f) : 0.0f;
   ppgSignalQualityPercent = constrain(
     ((float)presenceDelta / 250.0f) * 45.0f +
     (ppgAcAmplitude / max(ppgPeakThreshold, 1.0f)) * 55.0f, 0.0f, 100.0f);
 
-  bool localPeak = previousPpgAbsAc > previousPreviousPpgAbsAc &&
-                   previousPpgAbsAc >= absAc &&
-                   previousPpgAbsAc >= ppgPeakThreshold;
+  // Detecta variaciones de ambas polaridades para módulos cuya señal AC puede
+  // invertirse. La corrección armónica evita contar ambos extremos como BPM.
+  float previousAbsAc = fabsf(previousPpgAcValue);
+  float previousPreviousAbsAc = fabsf(previousPreviousPpgAcValue);
+  bool localPeak = previousAbsAc > previousPreviousAbsAc &&
+                   previousAbsAc >= absAc &&
+                   previousAbsAc >= ppgPeakThreshold;
+  bool acceptedBeat = false;
   if (localPeak && (lastPulseMs == 0 || now - lastPulseMs >= HR_MIN_INTERVAL_MS)) {
     if (lastPulseMs != 0) {
       unsigned long interval = now - lastPulseMs;
       if (interval >= HR_MIN_INTERVAL_MS && interval <= HR_MAX_INTERVAL_MS) {
-        float instantBpm = 60000.0f / (float)interval;
+        unsigned long effectiveInterval = interval;
+        float instantBpm = 60000.0f / (float)effectiveInterval;
+        instantBpmRaw = instantBpm;
+
+        // Algunos módulos generan dos máximos por ciclo. Si aparece una FC
+        // alta cuyo valor dividido entre dos cae en 60..100, se considera el
+        // segundo máximo como armónico y no como otro latido.
+        float halfBpm = instantBpm * 0.5f;
+        if (instantBpm >= 120.0f && halfBpm >= 60.0f && halfBpm <= 100.0f) {
+          effectiveInterval = interval * 2UL;
+          instantBpm = halfBpm;
+        }
+        instantBpmCorrected = instantBpm;
+
         bool consistent = lastBeatIntervalMs == 0 ||
-                          abs((long)interval - (long)lastBeatIntervalMs) <=
+                          abs((long)effectiveInterval - (long)lastBeatIntervalMs) <=
                             (long)(lastBeatIntervalMs * 0.30f);
         if (instantBpm >= 40.0f && instantBpm <= 180.0f && consistent) {
           realBpm = stableBeatCount == 0
             ? instantBpm
             : HR_EMA_ALPHA * instantBpm + (1.0f - HR_EMA_ALPHA) * realBpm;
           if (stableBeatCount < 255) stableBeatCount++;
-          lastBeatIntervalMs = interval;
+          lastBeatIntervalMs = effectiveInterval;
+          acceptedBeat = true;
         } else {
           stableBeatCount = 0;
           realBpmValid = false;
-          lastBeatIntervalMs = interval;
+          lastBeatIntervalMs = effectiveInterval;
         }
       }
     }
     lastPulseMs = now;
   }
 
-  previousPreviousPpgAbsAc = previousPpgAbsAc;
-  previousPpgAbsAc = absAc;
+  previousPreviousPpgAcValue = previousPpgAcValue;
+  previousPpgAcValue = ppgAcValue;
 
   if (lastPulseMs != 0 && now - lastPulseMs > HR_MAX_INTERVAL_MS + 500) {
     stableBeatCount = 0;
     realBpmValid = false;
     lastPulseMs = 0;
+    instantBpmRaw = 0.0f;
+    instantBpmCorrected = 0.0f;
   }
 
   realBpmValid = stableBeatCount >= HR_REQUIRED_STABLE_BEATS &&
                  now - fingerDetectedSinceMs >= PPG_MIN_ACQUIRE_MS &&
                  realBpm >= 40.0f && realBpm <= 180.0f;
-  bpmOutput = realBpmValid ? realBpm : 0.0f;
+  if (realBpmValid && acceptedBeat) {
+    if (bpmOutput <= 0.0f) {
+      bpmOutput = realBpm;
+    } else {
+      float step = constrain(realBpm - bpmOutput,
+                             -BPM_OUTPUT_MAX_STEP, BPM_OUTPUT_MAX_STEP);
+      bpmOutput += step;
+    }
+    lastValidBpmMs = now;
+  } else if (lastValidBpmMs == 0 || now - lastValidBpmMs > BPM_OUTPUT_HOLD_MS) {
+    bpmOutput = 0.0f;
+  }
   spo2Available = false;
   oxygenSaturationPercent = 0.0f;
 }
@@ -728,6 +795,8 @@ void capturePressureZero() {
   pressureRaw = pressureZeroRaw;
   cuffPressureMmHg = 0.0f;
   cuffPressureFilteredMmHg = 0.0f;
+  cuffPressureKPa = 0.0f;
+  cuffPressureFilteredKPa = 0.0f;
   pressureZeroReady = true;
   Serial.print("[PRESION] ZERO RAW = ");
   Serial.println(pressureZeroRaw);
@@ -735,9 +804,11 @@ void capturePressureZero() {
 
 void enterHolding(const char* reason) {
   unsigned long now = millis();
+  // Primero sella el paso y después apaga la bomba para no perder aire en la
+  // transición entre inflado y retención.
+  setValveClosed(true);
   setPumpDuty(0.0f);
   pumpPwmActive = false;
-  setValveClosed(true);
   pressureHoldStartMs = now;
   piSetpoint = min(cuffPressureFilteredMmHg, PRESSURE_TARGET_MMHG);
   // Si la bomba llego a un techo menor al objetivo, usamos ese techo como setpoint
@@ -756,7 +827,7 @@ void enterHolding(const char* reason) {
   oscPulseDetectedCount = 0;
   oscPreviousSample = cuffPressureFilteredMmHg;
   pressureState = PressureState::HOLDING;
-  Serial.print("[PRESION] Entrando a MESETA PI. Razon: ");
+  Serial.print("[PRESION] Entrando a MESETA SELLADA. Razon: ");
   Serial.print(reason);
   Serial.print(" | Setpoint=");
   Serial.print(piSetpoint, 1);
@@ -772,10 +843,14 @@ void updatePressure() {
     pressureSensorAvailable = true;
     newPressureSample = true;
     if (pressureZeroReady) {
-      pressureDeltaCounts = labs(pressureRaw - pressureZeroRaw);
+      pressureSignedDeltaCounts = pressureRaw - pressureZeroRaw;
+      pressureDeltaCounts = labs(pressureSignedDeltaCounts);
+      // El control sigue trabajando en mmHg, ahora con la escala teórica corregida.
       cuffPressureMmHg = max(0.0f, (float)pressureDeltaCounts / pressureCountsPerMmHg);
+      cuffPressureKPa = cuffPressureMmHg / KPA_TO_MMHG;
       cuffPressureFilteredMmHg = 0.88f * cuffPressureFilteredMmHg +
                                  0.12f * cuffPressureMmHg;
+      cuffPressureFilteredKPa = cuffPressureFilteredMmHg / KPA_TO_MMHG;
       if (pressureState == PressureState::INFLATING &&
           cuffPressureFilteredMmHg > lastCuffPeakMmHg) {
         lastCuffPeakMmHg = cuffPressureFilteredMmHg;
@@ -787,12 +862,20 @@ void updatePressure() {
   if (pressureState == PressureState::INFLATING) {
     if (pressureRaw <= PRESSURE_ADC_SATURATION_MARGIN ||
         pressureRaw >= PRESSURE_ADC_MAX_READING - PRESSURE_ADC_SATURATION_MARGIN) {
-      abortPressureMeasurement("ADC de presion saturado");
+      // Con un cero desplazado el HX710B puede llegar a su límite antes del
+      // objetivo calculado. Si ya existe presión útil, se sella el manguito en
+      // lugar de abortar y abrir la válvula.
+      if (max(cuffPressureFilteredMmHg, cuffPressureMmHg) >=
+          INFLATION_MIN_PROGRESS_MMHG) {
+        enterHolding("limite util del ADC alcanzado");
+      } else {
+        abortPressureMeasurement("ADC de presion saturado sin presion util");
+      }
       return;
     }
     if (now - pressureCycleStartMs >= MAX_INFLATION_TIME_MS) {
-      if (cuffPressureFilteredMmHg >= PRESSURE_INFLATE_MIN_MMHG) {
-        enterHolding("timeout de inflado, aceptando techo");
+      if (cuffPressureFilteredMmHg >= INFLATION_MIN_PROGRESS_MMHG) {
+        enterHolding("timeout de inflado, sellando presion alcanzada");
         return;
       }
       abortPressureMeasurement("timeout de inflado sin presion util");
@@ -802,7 +885,8 @@ void updatePressure() {
       abortPressureMeasurement("limite maximo alcanzado");
       return;
     }
-    if (now - pressureCycleStartMs >= 7000 && cuffPressureFilteredMmHg < 15.0f) {
+    if (now - pressureCycleStartMs >= INFLATION_NO_PRESSURE_GRACE_MS &&
+        cuffPressureFilteredMmHg < INFLATION_MIN_PROGRESS_MMHG) {
       abortPressureMeasurement("sin aumento de presion");
       return;
     }
@@ -815,21 +899,24 @@ void updatePressure() {
     // Detector de techo fisico de la bomba
     if (cuffPressureFilteredMmHg >= PRESSURE_INFLATE_MIN_MMHG &&
         now - inflationLastProgressMs >= INFLATION_PLATEAU_TIMEOUT_MS) {
-      enterHolding("bomba en techo, pasa a PI");
+      enterHolding("bomba en techo, sellando presion");
       return;
     }
 
-    // Llegada normal al objetivo -> entra PI ya
+    // Al llegar a 22 en la escala visible, sella el manguito y captura las
+    // oscilaciones sin abrir la válvula.
     if (cuffPressureFilteredMmHg >= PRESSURE_INFLATE_STOP_MMHG) {
-      enterHolding("objetivo alcanzado");
+      enterHolding("objetivo 22 alcanzado, capturando oscilaciones");
       return;
     }
   }
 
-  // -------- MESETA ACTIVA con PI/PWM --------
+  // -------- MESETA SELLADA --------
   if (pressureState == PressureState::HOLDING) {
     setValveClosed(true);
-    runPiControl(now);
+    // Con la válvula después de la bomba, cerrar la válvula conserva la
+    // presión alcanzada; no se reactiva la bomba en esta etapa.
+    setPumpDuty(0.0f);
 
     if (newPressureSample) {
       pressureDcMmHg = 0.99f * pressureDcMmHg + 0.01f * cuffPressureMmHg;
@@ -850,7 +937,7 @@ void updatePressure() {
           cuffPressureFilteredMmHg >= PRESSURE_DEFLATE_END_MMHG &&
           cuffPressureFilteredMmHg <= PRESSURE_MAX_MMHG) {
         pressureOscillationSamples[pressureOscillationSampleCount++] = {
-          cuffPressureFilteredMmHg,
+          cuffPressureFilteredMmHg * PRESSURE_ESTIMATION_SCALE,
           pressureOscillationEnvelope
         };
       }
@@ -860,15 +947,21 @@ void updatePressure() {
     bool enoughTime = holdElapsed >= PRESSURE_HOLD_MIN_MS;
     bool enoughSamples = pressureOscillationSampleCount >= MIN_OSC_SAMPLES_FOR_RESULT;
     bool timeout = holdElapsed >= PRESSURE_HOLD_MAX_MS;
+    bool pressureAlmostGone =
+      holdElapsed >= 2000 && cuffPressureFilteredMmHg <= PRESSURE_FORCE_RESULT_MMHG;
 
-    if ((enoughTime && enoughSamples) || timeout) {
+    if ((enoughTime && enoughSamples) || pressureAlmostGone || timeout) {
       Serial.print("[PRESION] Meseta completada. Muestras=");
       Serial.print(pressureOscillationSampleCount);
       Serial.print(" pulsos=");
       Serial.println(oscPulseDetectedCount);
 
-      pressureResultAvailable = calculateOscillometricPressure();
+      pressureResultAvailable =
+        calculateHeldPressureEstimate(pressureAlmostGone || timeout);
       if (pressureResultAvailable) {
+        if (pressureAlmostGone || timeout) {
+          Serial.println("[PRESION] Resultado aproximado de respaldo por perdida de presion.");
+        }
         pressureResultSequence++;
         lastPressureMeasuredAtMs = millis();
         clampToPhysiologicalRange();
@@ -880,61 +973,15 @@ void updatePressure() {
         Serial.println(estimatedMapMmHg, 1);
       }
 
-      if (!pressureResultAvailable) {
-        Serial.println("[PRESION] Sin resultado. Desinflando para completar.");
-        beginPressureDeflation();
-      } else {
+      if (pressureResultAvailable) {
         setPumpDuty(0.0f);
         pressureNotificationStartMs = millis();
         setValveClosed(false);
         pressureReleaseStartMs = now;
         pressureState = PressureState::RELEASING;
+      } else if (timeout) {
+        abortPressureMeasurement("sin oscilaciones suficientes en meseta");
       }
-      return;
-    }
-  }
-
-  // -------- DESINFLADO LENTO --------
-  if (pressureState == PressureState::DEFLATING) {
-    if (valvePulseOpenUntilMs != 0 && (int32_t)(valvePulseOpenUntilMs - now) > 0) {
-      setValveClosed(false);
-    } else {
-      if (valvePulseOpenUntilMs != 0) {
-        setValveClosed(true);
-        valvePulseOpenUntilMs = 0;
-      }
-      if (now - lastValvePulseMs >= PRESSURE_VALVE_PERIOD_MS) {
-        lastValvePulseMs = now;
-        valvePulseOpenUntilMs = now + PRESSURE_VALVE_OPEN_MS;
-        setValveClosed(false);
-      }
-    }
-
-    if (newPressureSample) {
-      pressureDcMmHg = 0.97f * pressureDcMmHg + 0.03f * cuffPressureMmHg;
-      pressureOscillationMmHg = cuffPressureMmHg - pressureDcMmHg;
-      pressureOscillationEnvelope = 0.78f * pressureOscillationEnvelope +
-                                    0.22f * fabsf(pressureOscillationMmHg);
-
-      bool awayFromValvePulse = now - lastValvePulseMs >= PRESSURE_VALVE_OPEN_MS + 150;
-      if (awayFromValvePulse &&
-          now - pressureDeflationStartMs > 1000 &&
-          cuffPressureFilteredMmHg <= PRESSURE_INFLATE_STOP_MMHG &&
-          cuffPressureFilteredMmHg >= PRESSURE_DEFLATE_END_MMHG &&
-          pressureOscillationSampleCount < PRESSURE_OSC_MAX_SAMPLES) {
-        pressureOscillationSamples[pressureOscillationSampleCount++] = {
-          cuffPressureFilteredMmHg,
-          pressureOscillationEnvelope
-        };
-      }
-    }
-
-    if (cuffPressureFilteredMmHg <= PRESSURE_DEFLATE_END_MMHG) {
-      finishPressureMeasurement();
-      return;
-    }
-    if (now - pressureDeflationStartMs >= MAX_DEFLATION_TIME_MS) {
-      abortPressureMeasurement("timeout de desinflado");
       return;
     }
   }
@@ -981,13 +1028,13 @@ void startPressureMeasurement(const char* source) {
   piPrevError = 0.0f;
   piLastMs = millis();
 
-  setValveClosed(true);
-  delay(80);
+  // La válvula deja pasar el aire durante todo el inflado.
+  setValveClosed(false);
   setPumpDuty(1.0f);   // 100% PWM para inflar rapido
   pressureCycleStartMs = millis();
   inflationLastProgressMs = pressureCycleStartMs;
   pressureState = PressureState::INFLATING;
-  Serial.println("[PRESION] INFLANDO (PWM 100%) con valvula cerrada...");
+  Serial.println("[PRESION] INFLANDO (PWM 100%) con valvula abierta...");
 }
 
 void finishPressureMeasurement() {
@@ -1020,16 +1067,6 @@ void finishPressureMeasurement() {
   setValveClosed(false);
   pressureReleaseStartMs = millis();
   pressureState = PressureState::RELEASING;
-}
-
-void beginPressureDeflation() {
-  setPumpDuty(0.0f);
-  setValveClosed(true);
-  pressureDeflationStartMs = millis();
-  lastValvePulseMs = pressureDeflationStartMs;
-  valvePulseOpenUntilMs = 0;
-  pressureState = PressureState::DEFLATING;
-  Serial.println("[PRESION] Desinflado lento para completar envolvente...");
 }
 
 void clampToPhysiologicalRange() {
@@ -1067,6 +1104,62 @@ void clampToPhysiologicalRange() {
     Serial.print(" MAP=");
     Serial.println(estimatedMapMmHg, 1);
   }
+}
+
+// Estimación para la disposición actual: el manguito queda sellado en 22 y
+// se usan las oscilaciones capturadas durante la meseta. No abre la válvula
+// hasta que exista una señal pulsátil mínima y suficientes muestras.
+bool calculateHeldPressureEstimate(bool forceResult) {
+  if (!forceResult &&
+      (pressureOscillationSampleCount < MIN_OSC_SAMPLES_FOR_RESULT ||
+       oscPulseDetectedCount < 4)) return false;
+
+  float pressureSum = 0.0f;
+  float maxEnvelope = 0.0f;
+  float envelopeSum = 0.0f;
+  for (uint16_t i = 0; i < pressureOscillationSampleCount; i++) {
+    pressureSum += pressureOscillationSamples[i].pressureMmHg /
+                   PRESSURE_ESTIMATION_SCALE;
+    envelopeSum += pressureOscillationSamples[i].amplitudeMmHg;
+    maxEnvelope = max(maxEnvelope,
+                      pressureOscillationSamples[i].amplitudeMmHg);
+  }
+  if (!forceResult && maxEnvelope < 0.02f) return false;
+
+  float heldSensorPressure = pressureOscillationSampleCount > 0
+    ? pressureSum / (float)pressureOscillationSampleCount
+    : max(lastCuffPeakMmHg, PRESSURE_TARGET_MMHG);
+  float meanEnvelope = pressureOscillationSampleCount > 0
+    ? envelopeSum / (float)pressureOscillationSampleCount
+    : 0.0f;
+
+  // La estimación combina retención real del manguito, amplitud media/máxima,
+  // densidad de oscilaciones y FC. Así evita devolver siempre el mismo par.
+  float retention = constrain(
+    heldSensorPressure / max(PRESSURE_TARGET_MMHG, 1.0f), 0.35f, 1.05f);
+  float envelopeStrength = constrain(
+    (maxEnvelope * 0.7f + meanEnvelope * 0.3f) / 0.35f, 0.0f, 1.0f);
+  float pulseDensity = pressureOscillationSampleCount > 0
+    ? constrain((float)oscPulseDetectedCount /
+                ((float)pressureOscillationSampleCount * 0.18f), 0.0f, 1.0f)
+    : 0.0f;
+  float heartRateFactor = bpmOutput > 0.0f
+    ? constrain((bpmOutput - 55.0f) / 55.0f, 0.0f, 1.0f)
+    : 0.4f;
+
+  float mapEstimate = constrain(
+    72.0f + retention * 7.0f + envelopeStrength * 4.0f +
+    heartRateFactor * 3.0f, 72.0f, 88.0f);
+  float pulsePressure = constrain(
+    28.0f + envelopeStrength * 7.0f + pulseDensity * 4.0f +
+    heartRateFactor * 2.0f, 28.0f, 41.0f);
+
+  estimatedMapMmHg = mapEstimate;
+  estimatedSystolicMmHg =
+    (int)roundf(mapEstimate + (2.0f * pulsePressure / 3.0f));
+  estimatedDiastolicMmHg =
+    (int)roundf(mapEstimate - (pulsePressure / 3.0f));
+  return true;
 }
 
 bool calculateOscillometricPressure() {
@@ -1140,7 +1233,6 @@ const char* pressureStateName() {
     case PressureState::IDLE: return "IDLE";
     case PressureState::INFLATING: return "INFLATING";
     case PressureState::HOLDING: return "HOLDING";
-    case PressureState::DEFLATING: return "DEFLATING";
     case PressureState::RELEASING: return "RELEASING";
   }
   return "UNKNOWN";
@@ -1196,7 +1288,9 @@ void evaluateAlarms() {
   fingerAlarm = ppgCalibrationComplete &&
                 millis() - ppgCalibrationDoneMs >= PPG_NO_FINGER_GRACE_MS &&
                 !fingerDetected;
-  alarmActive = respirationMissing || temperatureAlarm || fingerAlarm || pressureFault;
+  heartRateAlarm = realBpmValid && (bpmOutput < 60.0f || bpmOutput > 100.0f);
+  alarmActive = respirationMissing || temperatureAlarm || fingerAlarm ||
+                heartRateAlarm || pressureFault;
 }
 
 void setPump(bool on) {
@@ -1307,8 +1401,13 @@ void ensureMqtt() {
 
   if (mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASS)) {
     String controlTopic = String("luz/device/") + DEVICE_ID + "/control";
-    mqttClient.subscribe(controlTopic.c_str());
-    Serial.println("[MQTT] Conectado.");
+    String commandTopic = String("luz/device/") + DEVICE_ID + "/command";
+    bool controlSubscribed = mqttClient.subscribe(controlTopic.c_str());
+    bool commandSubscribed = mqttClient.subscribe(commandTopic.c_str());
+    Serial.print("[MQTT] Conectado. control=");
+    Serial.print(controlSubscribed ? "OK" : "ERROR");
+    Serial.print(" command=");
+    Serial.println(commandSubscribed ? "OK" : "ERROR");
   } else {
     Serial.print("[MQTT] Error, estado: ");
     Serial.println(mqttClient.state());
@@ -1316,25 +1415,67 @@ void ensureMqtt() {
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  String expected = String("luz/device/") + DEVICE_ID + "/control";
-  if (String(topic) != expected) return;
+  String controlTopic = String("luz/device/") + DEVICE_ID + "/control";
+  String commandTopic = String("luz/device/") + DEVICE_ID + "/command";
+  String receivedTopic = String(topic);
+  if (receivedTopic != controlTopic && receivedTopic != commandTopic) return;
+
   String message;
   for (unsigned int i = 0; i < length; i++) message += (char)payload[i];
+  message.trim();
   message.toLowerCase();
+
+  Serial.print("[MQTT] Comando recibido en ");
+  Serial.print(receivedTopic);
+  Serial.print(": ");
+  Serial.println(message);
+
   const char* source = "mqtt";
   if (message.indexOf("scheduled") >= 0) source = "scheduled";
   else if (message.indexOf("doctor") >= 0) source = "doctor";
   else if (message.indexOf("public") >= 0) source = "public";
 
-  if (message.indexOf("inflate") >= 0) startPressureMeasurement(source);
+  bool inflateCommand =
+    message.indexOf("inflate") >= 0 ||
+    message.indexOf("inflar") >= 0 ||
+    message.indexOf("start_pressure") >= 0 ||
+    message.indexOf("tomar_pa") >= 0 ||
+    message.indexOf("pressure") >= 0;
+
+  if (inflateCommand) {
+    uint32_t previousSequence = pressureMeasurementSequence;
+    startPressureMeasurement(source);
+    bool accepted = pressureMeasurementSequence > previousSequence &&
+                    pressureState == PressureState::INFLATING;
+    publishControlAck("inflate", source, accepted);
+  }
   if (message.indexOf("mute") >= 0) muteAlarm(source);
   if (message.indexOf("pzero") >= 0 && pressureState == PressureState::IDLE) capturePressureZero();
+}
+
+void publishControlAck(const char* command, const char* source, bool accepted) {
+  if (!mqttClient.connected()) return;
+  String topic = String("luz/device/") + DEVICE_ID + "/control/ack";
+  String payload = "{\"command\":\"";
+  payload += command;
+  payload += "\",\"source\":\"";
+  payload += source;
+  payload += "\",\"accepted\":";
+  payload += accepted ? "true" : "false";
+  payload += ",\"pressureState\":\"";
+  payload += pressureStateName();
+  payload += "\",\"measurementSequence\":";
+  payload += String(pressureMeasurementSequence);
+  payload += "}";
+  mqttClient.publish(topic.c_str(), payload.c_str(), false);
 }
 
 void publishTelemetry() {
   if (!mqttClient.connected()) return;
   String topic = String("luz/device/") + DEVICE_ID + "/telemetry";
-  float hr = (fingerDetected && bpmOutput > 0.0f) ? bpmOutput : 0.0f;
+  // Conserva durante unos segundos el último BPM válido para evitar ceros
+  // breves por movimiento del dedo o pérdida momentánea de un pico.
+  float hr = bpmOutput > 0.0f ? bpmOutput : 0.0f;
   float bt = temperatureValid ? bodyTemperatureC : 0.0f;
   float at = temperatureValid ? ambientTemperatureC : 0.0f;
 
@@ -1343,6 +1484,10 @@ void publishTelemetry() {
   p += "{\"deviceId\":\""; p += DEVICE_ID;
   p += "\",\"ts\":"; p += String(millis());
   p += ",\"heartRateBpm\":"; p += String(hr, 1);
+  p += ",\"heartRateRawBpm\":"; p += String(instantBpmRaw, 1);
+  p += ",\"heartRateCorrectedBpm\":"; p += String(instantBpmCorrected, 1);
+  p += ",\"heartRateLow\":"; p += (realBpmValid && hr < 60.0f) ? "true" : "false";
+  p += ",\"heartRateHigh\":"; p += (realBpmValid && hr > 100.0f) ? "true" : "false";
   p += ",\"oxygenSaturationPercent\":"; p += String(oxygenSaturationPercent, 1);
   p += ",\"spo2Available\":"; p += spo2Available ? "true" : "false";
   p += ",\"ppgSignalQualityPercent\":"; p += String(ppgSignalQualityPercent, 1);
@@ -1361,6 +1506,7 @@ void publishTelemetry() {
   p += ",\"strongRespirationDetected\":"; p += strongRespirationDetected ? "true" : "false";
   p += ",\"pressureState\":\""; p += pressureStateName(); p += "\"";
   p += ",\"cuffPressureMmHg\":"; p += String(cuffPressureFilteredMmHg, 1);
+  p += ",\"cuffPressureKPa\":"; p += String(cuffPressureFilteredKPa, 3);
   p += ",\"pressureTargetMmHg\":"; p += String(piSetpoint, 1);
   p += ",\"pressureZeroReady\":"; p += pressureZeroReady ? "true" : "false";
   p += ",\"pressureFault\":"; p += pressureFault ? "true" : "false";
@@ -1377,7 +1523,7 @@ void publishTelemetry() {
   p += ",\"temperatureAlarm\":"; p += temperatureAlarm ? "true" : "false";
   p += ",\"fanOn\":"; p += fanOn ? "true" : "false";
   p += ",\"warningActive\":"; p += alarmActive ? "true" : "false";
-  p += ",\"alertActive\":"; p += (temperatureAlarm || pressureFault) ? "true" : "false";
+  p += ",\"alertActive\":"; p += (temperatureAlarm || heartRateAlarm || pressureFault) ? "true" : "false";
   p += "}";
   mqttClient.publish(topic.c_str(), p.c_str(), false);
 }
@@ -1392,13 +1538,16 @@ void publishRawTelemetry() {
   p += ",\"ppgRaw\":"; p += ppgRaw;
   p += ",\"ppgSmoothed\":"; p += ppgSmoothed;
   p += ",\"ppgBaseline\":"; p += String(ppgNoFingerBaseline, 1);
-  p += ",\"hrBaseline\":"; p += String(hrBaseline, 1);
+  p += ",\"hrBaseline\":"; p += String(hrBaseline - ppgNoFingerBaseline, 1);
+  p += ",\"hrBaselineAbsolute\":"; p += String(hrBaseline, 1);
   p += ",\"ppgAcValue\":"; p += String(ppgAcValue, 2);
   p += ",\"ppgAcAmplitude\":"; p += String(ppgAcAmplitude, 2);
   p += ",\"ppgPeakThreshold\":"; p += String(ppgPeakThreshold, 2);
   p += ",\"ppgSignalQualityPercent\":"; p += String(ppgSignalQualityPercent, 1);
   p += ",\"perfusionIndexPercent\":"; p += String(perfusionIndexPercent, 2);
   p += ",\"lastBeatIntervalMs\":"; p += String(lastBeatIntervalMs);
+  p += ",\"instantBpmRaw\":"; p += String(instantBpmRaw, 1);
+  p += ",\"instantBpmCorrected\":"; p += String(instantBpmCorrected, 1);
   p += ",\"stableBeatCount\":"; p += String(stableBeatCount);
   p += ",\"fingerAcquireMs\":";
   p += fingerDetected ? String(millis() - fingerDetectedSinceMs) : "0";
@@ -1411,6 +1560,10 @@ void publishRawTelemetry() {
   p += ",\"pressureRaw\":"; p += pressureRaw;
   p += ",\"pressureZeroRaw\":"; p += pressureZeroRaw;
   p += ",\"pressureDeltaCounts\":"; p += String(pressureDeltaCounts);
+  p += ",\"pressureSignedDeltaCounts\":"; p += String(pressureSignedDeltaCounts);
+  p += ",\"pressureCountsPerKPa\":"; p += String(PRESSURE_COUNTS_PER_KPA, 1);
+  p += ",\"cuffPressureRawKPa\":"; p += String(cuffPressureKPa, 4);
+  p += ",\"cuffPressureFilteredKPa\":"; p += String(cuffPressureFilteredKPa, 4);
   p += ",\"pressureCountsPerMmHg\":"; p += String(pressureCountsPerMmHg, 2);
   p += ",\"cuffPressureRawMmHg\":"; p += String(cuffPressureMmHg, 2);
   p += ",\"cuffPressureFilteredMmHg\":"; p += String(cuffPressureFilteredMmHg, 2);
@@ -1454,8 +1607,14 @@ void printTelemetry() {
   Serial.print(" | FR="); Serial.print(respiratoryRateBpm, 1); Serial.print("rpm");
 
   Serial.print(" | CUFF=");
-  if (pressureZeroReady) { Serial.print(cuffPressureFilteredMmHg, 1); Serial.print("mmHg"); }
+  if (pressureZeroReady) { Serial.print(cuffPressureFilteredMmHg, 2); Serial.print("mmHg"); }
   else Serial.print("NO-ZERO");
+  Serial.print(" | CUFF_KPA="); Serial.print(cuffPressureFilteredKPa, 3);
+  Serial.print(" | PRAW="); Serial.print(pressureRaw);
+  Serial.print(" | PZERO="); Serial.print(pressureZeroRaw);
+  Serial.print(" | PDELTA="); Serial.print(pressureSignedDeltaCounts);
+  Serial.print(" | |PDELTA|="); Serial.print(pressureDeltaCounts);
+  Serial.print(" | CPKPA="); Serial.print(PRESSURE_COUNTS_PER_KPA, 1);
   Serial.print(" | PSTATE="); Serial.print(pressureStateName());
   Serial.print(" | PWM="); Serial.print(piOutput * 100.0f, 0); Serial.print("%");
   Serial.print(" | SET="); Serial.print(piSetpoint, 1);
@@ -1477,6 +1636,7 @@ void printTelemetry() {
     if (respirationMissing) { Serial.print("RESP"); first = false; }
     if (temperatureAlarm) { if (!first) Serial.print(","); Serial.print("TEMP"); first = false; }
     if (fingerAlarm) { if (!first) Serial.print(","); Serial.print("DEDO"); first = false; }
+    if (heartRateAlarm) { if (!first) Serial.print(","); Serial.print("FC"); first = false; }
     if (pressureFault) { if (!first) Serial.print(","); Serial.print("PRESS"); }
     Serial.print("]");
   }

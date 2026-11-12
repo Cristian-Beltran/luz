@@ -27,7 +27,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import axios from "@/lib/axios";
 import { ClinicalStatusBadge } from "@/components/clinical/clinical-ui";
 import {
   pulseState,
@@ -44,6 +43,8 @@ const TELEMETRY_TOPIC = `luz/device/${DEVICE_ID}/telemetry`;
 const SESSION_TOPIC = `luz/device/${DEVICE_ID}/session`;
 const AI_TOPIC = `luz/device/${DEVICE_ID}/ai`;
 const EVENTS_TOPIC = `luz/device/${DEVICE_ID}/events`;
+const CONTROL_TOPIC = `luz/device/${DEVICE_ID}/control`;
+const CONTROL_ACK_TOPIC = `luz/device/${DEVICE_ID}/control/ack`;
 const DEVICE_TIMEOUT_MS = 12_000;
 const AI_MESSAGE_TTL_MS = 10_000;
 
@@ -200,10 +201,12 @@ export default function PublicMonitoringPage() {
   const [events, setEvents] = useState<SessionEvent[]>([]);
   const [now, setNow] = useState(Date.now());
   const [commandLoading, setCommandLoading] = useState<"inflate" | "mute" | null>(null);
+  const [commandFeedback, setCommandFeedback] = useState<string>("");
 
   const SMOOTHING_ALPHA = 0.15;
   const smoothedPulseRef = useRef<number | undefined>(undefined);
   const respirationWindowRef = useRef<number[]>([]);
+  const mqttClientRef = useRef<MqttClient | null>(null);
   const RESP_WINDOW_SIZE = 20;
 
   useEffect(() => {
@@ -217,10 +220,17 @@ export default function PublicMonitoringPage() {
       connectOptions.password = MQTT_PASSWORD;
     }
     const client: MqttClient = mqtt.connect(MQTT_WS_URL, connectOptions);
+    mqttClientRef.current = client;
 
     client.on("connect", () => {
       setMqttOnline(true);
-      client.subscribe([TELEMETRY_TOPIC, SESSION_TOPIC, AI_TOPIC, EVENTS_TOPIC]);
+      client.subscribe([
+        TELEMETRY_TOPIC,
+        SESSION_TOPIC,
+        AI_TOPIC,
+        EVENTS_TOPIC,
+        CONTROL_ACK_TOPIC,
+      ]);
     });
 
     client.on("offline", () => setMqttOnline(false));
@@ -281,12 +291,22 @@ export default function PublicMonitoringPage() {
             }];
           }));
         }
+        if (topic === CONTROL_ACK_TOPIC) {
+          const accepted = payload.accepted === true;
+          const state = String(payload.pressureState ?? "");
+          setCommandFeedback(
+            accepted
+              ? `Comando aceptado${state ? ` · ${state}` : ""}`
+              : `Comando rechazado${state ? ` · estado ${state}` : ""}`,
+          );
+        }
       } catch {
         return;
       }
     });
 
     return () => {
+      mqttClientRef.current = null;
       client.end(true);
     };
   }, []);
@@ -345,8 +365,25 @@ export default function PublicMonitoringPage() {
 
   const onCommand = async (command: "inflate" | "mute") => {
     setCommandLoading(command);
+    setCommandFeedback("");
     try {
-      await axios.post("/monitoring/command", { command, source: "public" });
+      const client = mqttClientRef.current;
+      if (!client?.connected) {
+        throw new Error("MQTT desconectado");
+      }
+      await new Promise<void>((resolve, reject) => {
+        client.publish(
+          CONTROL_TOPIC,
+          JSON.stringify({ command, source: "public" }),
+          { qos: 1 },
+          (error) => error ? reject(error) : resolve(),
+        );
+      });
+      setCommandFeedback(
+        command === "inflate" ? "Inflado solicitado" : "Silencio solicitado",
+      );
+    } catch {
+      setCommandFeedback("No se pudo enviar el comando por MQTT");
     } finally {
       setCommandLoading(null);
     }
@@ -462,19 +499,22 @@ export default function PublicMonitoringPage() {
                   <Button
                     variant="outline"
                     className="border-white/10 bg-black/20 text-slate-100 hover:bg-black/30"
-                    disabled={!session?.active || !deviceOnline || commandLoading !== null || last?.pressureState !== "IDLE"}
+                    disabled={!mqttOnline || !deviceOnline || commandLoading !== null || last?.pressureState !== "IDLE"}
                     onClick={() => void onCommand("inflate")}
                   >
-                    <Gauge className="mr-1 h-4 w-4" /> {commandLoading === "inflate" ? "Enviando" : "Tomar PA"}
+                    <Gauge aria-hidden="true" className="mr-1 h-4 w-4" /> {commandLoading === "inflate" ? "Enviando…" : "Tomar PA"}
                   </Button>
                   <Button
                     variant="outline"
                     className="border-white/10 bg-black/20 text-slate-100 hover:bg-black/30"
-                    disabled={!session?.active || !deviceOnline || commandLoading !== null || !last?.warningActive}
+                    disabled={!mqttOnline || !deviceOnline || commandLoading !== null || !last?.warningActive}
                     onClick={() => void onCommand("mute")}
                   >
-                    <BellOff className="mr-1 h-4 w-4" /> {last?.alarmMuted ? "Silenciada" : "Silenciar"}
+                    <BellOff aria-hidden="true" className="mr-1 h-4 w-4" /> {last?.alarmMuted ? "Silenciada" : "Silenciar"}
                   </Button>
+                </div>
+                <div aria-live="polite" className="min-h-4 text-[10px] text-cyan-200">
+                  {commandFeedback}
                 </div>
                 <div className="max-h-28 space-y-1 overflow-auto rounded-lg border border-white/10 bg-black/20 p-2">
                   <div className="text-[10px] uppercase text-slate-400">Eventos de sesion</div>
